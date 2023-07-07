@@ -14,6 +14,7 @@
 #define MULTICONTROL_H_
 
 int multiControlAnyButtonPressed = 0;
+int multiControlAnyTouchPressed = 0;
 
 class MultiControl {
   public:
@@ -85,7 +86,14 @@ class MultiControl {
       prevTouchVal = (prevTouchVal + tVal) * 0.5f;
       if (prevTouchVal < 10) prevTouchVal = 0;
       _touchValue = prevTouchVal;
+      bool prevTState = _touchState;
       _touchState = prevTouchVal > 0;
+      if (prevTState == true && _touchState == false) {
+        multiControlAnyTouchPressed -= 1;
+      } 
+      if (prevTState == false && _touchState == true) {
+         multiControlAnyTouchPressed += 1;
+      }
       return _touchValue;
     }
 
