@@ -8,13 +8,6 @@ void setup() {
   delay(1000); // give time to bring up serial monitor
   for (int i=0; i<14; i++) { // setup the GPIO pins and controller types
     controlPads[i].setPin(i+1);
-    if (i < 2) {
-      controlPads[i].setControl(MultiControl::BUTTON);
-    } else if (i == 4) {
-      controlPads[i].setControl(MultiControl::SWITCH);
-    } else if (i == 6) {
-      controlPads[i].setControl(MultiControl::POT);
-    } else controlPads[i].setControl(MultiControl::TOUCH);
   }
   Serial.println("ESP32 MiltiControl Test");
 }
@@ -24,10 +17,10 @@ void loop() {
     controlPads[i].read(); // read the pin value
     Serial.print(controlPads[i].getPin()); // print current state per pin
     Serial.print(" button: ");Serial.print(controlPads[i].isPressed());
-    Serial.print(" touch: ");Serial.print(controlPads[i].getTouchValue());
+    Serial.print(" touch: ");Serial.print(controlPads[i].readTouch());
     Serial.print(" touched: ");Serial.print(controlPads[i].isTouched());
-    Serial.print(" switch: ");Serial.print(controlPads[i].getSwitchValue());
-    Serial.print(" pot: ");Serial.print(controlPads[i].getPotValue());
+    Serial.print(" switch: ");Serial.print(controlPads[i].readSwitch());
+    Serial.print(" pot: ");Serial.print(controlPads[i].readPot());
     Serial.println();
   }
   // some globals
