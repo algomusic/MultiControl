@@ -74,10 +74,10 @@ class MultiControl {
       }
       int readVal = touchRead(_pin)>>8;
       if (readVal < _minTouchVal) _minTouchVal = readVal;
-      if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 5;
+      if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 4;
       int tVal = 0;
       if (readVal > _minTouchVal) {
-        tVal = (readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal) * 1024.0f;
+        tVal = (readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal) * 1023.0f;
       }
       tVal = min(1024, tVal);
       _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
@@ -145,7 +145,7 @@ class MultiControl {
       if (_potReadCnt >= 10) {
         _potReadCnt = 0;
       }
-      int minVal = 10000;
+      int minVal = 1023;
       int maxVal = 0;
       int minIndex = 0;
       int maxIndex = 1;
@@ -328,8 +328,8 @@ class MultiControl {
           _firstLatchChanged = false;
           setBankValue(val);
         } else val = -1; // don't return anything
-      } else setBankValue(val);
-      return val;
+      } else setBankValue(min(1023, val));
+      return min(1023, val);
     }
 
 };
