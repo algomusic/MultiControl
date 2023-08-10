@@ -20,7 +20,9 @@ int multiControlAnyPressed = 0;
 class MultiControl {
   public:
     /** Constructor. */
-    MultiControl() {};
+    MultiControl() {
+      initBanks(_numBanks);
+    };
 
     /** Constructor. 
     * @param pin The GPIO pin number to use for the control.
@@ -28,6 +30,7 @@ class MultiControl {
     MultiControl(uint8_t pin): _pin(pin) {
       pinMode(pin, INPUT); // default to Touch
       analogSetPinAttenuation(pin, ADC_11db); // ESP32
+      initBanks(_numBanks);
     };
 
     /** Constructor. 
@@ -38,6 +41,7 @@ class MultiControl {
       setPin(pin);
       setControl(controlType);
       analogSetPinAttenuation(pin, ADC_11db); // ESP32
+      initBanks(_numBanks);
     };
 
     /* Set the GPIO pin to use for this control
@@ -91,6 +95,7 @@ class MultiControl {
       if (prevTState == false && _touchState == true) {
          multiControlAnyTouchPressed += 1;
       }
+      setValue(_touchValue);
       return _touchValue;
     }
 
@@ -112,16 +117,17 @@ class MultiControl {
       if (_controlType != _BUTTON) {
         setControl(_BUTTON);
       }
-      int buttonValue = digitalRead(_pin);
-      if (buttonValue == 0 && _buttonValue == false) {
+      int val = digitalRead(_pin);
+      if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
       }
-      if (buttonValue == 1 && _buttonValue == true) {
+      if (val == 1 && _buttonValue == true) {
         _buttonValue = false; 
         multiControlAnyButtonPressed -= 1;
       }
-      return _buttonValue;
+      setValue(val);
+      return val;
     }
 
     bool isPressed() {
@@ -137,6 +143,15 @@ class MultiControl {
       if (_controlType != _POT) {
         setControl(_POT);
       }
+      /* // alternative, simpler but less smooth
+      int readVal = analogRead(_pin);
+      float readDiff = abs(readVal - _avePotReadVal);
+      if (readDiff > 75 || readVal == 0 || readVal > 4000) {
+        _avePotReadVal = (readVal + _avePotReadVal * 2) * 0.33f;
+        // Serial.print(aveVal); Serial.print(" ");Serial.print(readDiff);Serial.print(" ");
+      } 
+      */
+      
       int tempPotVal = _potValue;
       int readVal = analogRead(_pin) >> 2;
       // smooth by averaging the last 10 readings
@@ -164,10 +179,12 @@ class MultiControl {
       for (int i = 0; i < 10; i++) {
         if (i != minIndex || i != maxIndex) _avePotReadVal += _potReadVals[i];
       }
-      _avePotReadVal = _avePotReadVal >> 3;
-      _potValue = slew(_avePotReadVal, _potValue, 0.2f);
-      int retVal = _potValue;
-      retVal = checkBank(retVal);
+      _avePotReadVal = (int)_avePotReadVal >> 3;
+      int retVal = slew(_avePotReadVal, _potValue, 0.2f);
+      if (readVal == 0) {
+        retVal = min(checkBank(readVal), retVal);
+      } else retVal = checkBank(retVal);
+      if (retVal >= 0) setValue(retVal);
       return retVal;
     }
 
@@ -177,9 +194,10 @@ class MultiControl {
       if (_controlType != _SWITCH) {
         setControl(_SWITCH);
       }
-      _switchValue = digitalRead(_pin);
-      _switchValue = checkBank(_switchValue);
-      return _switchValue;
+      int val = digitalRead(_pin);
+      val = checkBank(val);
+      if (val >= 0) setValue(val);
+      return val;
     }
 
     /* Is switch in the On position? */
@@ -199,69 +217,71 @@ class MultiControl {
 
     /* Return the control value on the controller type */
     int getValue() {
-      if (_controlType == 0) return _touchValue;
-      if (_controlType == 1) return _potValue;
-      if (_controlType == 2) return _buttonValue;
-      if (_controlType == 3) return _switchValue;
-      return 0; // just in case
+      return _bankVals[_bank]; 
+    }
+
+    /* Sepcify the control value on the controller type */
+    void setValue(int type, int val) {
+      _bankVals[_bank] = val;
+      _controlType = type;
+      if (_controlType == 0) _touchValue = val;
+      if (_controlType == 1) _potValue = val;
+      if (_controlType == 2) _buttonValue = val;
+      if (_controlType == 3) _switchValue = val;
+    }
+
+    /* Sepcify the control value on the controller type */
+    void setValue(int val) {
+      setValue(_controlType, val);
     }
 
     // banks
-    /* Setup the default number of banks.
-    *  This will delete any existing banks.
-    */
-    void initBanks() {
-      initBanks(_numBanks);
-    }
-
     /* Setup the number of banks. 
     *  This will delete any existing banks.
     */
     void initBanks(int numBanks) {
-      // Serial.println("Initialising Banks for MultiControl");
       _numBanks = numBanks;
       delete[] _bankVals;
       _bankVals = new int[_numBanks];
       for (int i=0; i<_numBanks; i++) {
         _bankVals[i] = 0;
       }
-      _bankInitialised = true;
+      _bank = 0;
     }
 
     /* Choose the current bank */
     void setBank(uint8_t bank) { 
-      if (!_bankInitialised) initBanks();
       _bank = bank % _numBanks; 
       _bankChanged = true;
       _latchAbove = false;
       _latchBelow = false;
+      Serial.println("Bank changed. Current bank: " + String(_bank) + " Value: " + String(getValue()));
     }
 
     /* Get the current bank */
     int getBank() { 
-      if (!_bankInitialised) initBanks();
       return _bank; 
     }
 
     /* Set the current bank's value */
     void setBankValue(int val) { 
-      if (!_bankInitialised) initBanks();
       _bankVals[_bank] = val;
     }
 
     /* Set a particular bank's value */
     void setBankValue(int bank, int val) { 
-      if (!_bankInitialised) initBanks();
       _bankVals[bank] = val;
     }
 
     /* Get the current bank's value */
     int getBankValue() { 
-      if (!_bankInitialised) initBanks();
-      return _bankVals[_bank]; 
+      return getValue(); 
     }
 
-    bool getBankInitialised() { return _bankInitialised; }
+    /* Set the changed status of a bank */
+    void setBankChanged(bool val) { 
+      _bankChanged = val;
+    }
 
   private:
 
@@ -275,7 +295,7 @@ class MultiControl {
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch
     int _potValue = 0; // 0 - 1023
     int * _potReadVals = new int[10];
-    int _avePotReadVal = 0;
+    float _avePotReadVal = 0;
     uint8_t _potReadCnt = 0;
     int8_t _switchValue = 0; // 0 - 1
     const static uint8_t _TOUCH = 0;
@@ -283,9 +303,8 @@ class MultiControl {
     const static uint8_t _BUTTON = 2;
     const static uint8_t _SWITCH = 3;
     int _numBanks = 8;
-    int * _bankVals;
+    int * _bankVals = new int[_numBanks];
     uint8_t _bank = 0;
-    bool _bankInitialised = false;
     bool _bankChanged = true;
     bool _latchBelow = false;
     bool _latchAbove = false;
@@ -305,6 +324,7 @@ class MultiControl {
 
     /* Check if the bank has changed and if so, set the pot and switch to latch 
     * so as not to update until the value passes the previous value of that bank.
+    * Returns -1 when the bank has changed and the value should not be updated.
     */
     int checkBank(int val) {
       if (_bankChanged) {
@@ -326,9 +346,8 @@ class MultiControl {
           _bankChanged = false;
           _firstLatchVal = -1; // reset
           _firstLatchChanged = false;
-          setBankValue(val);
         } else val = -1; // don't return anything
-      } else setBankValue(min(1023, val));
+      } 
       return min(1023, val);
     }
 
