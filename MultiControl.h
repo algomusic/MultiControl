@@ -154,6 +154,7 @@ class MultiControl {
       
       int tempPotVal = _potValue;
       int readVal = analogRead(_pin) >> 2;
+      if (abs(readVal - _avePotReadVal) < 15 && readVal != 0 && readVal > 1000) readVal = _avePotReadVal;
       // smooth by averaging the last 10 readings
       _potReadVals[_potReadCnt] = readVal;
       _potReadCnt++;
@@ -265,7 +266,7 @@ class MultiControl {
 
     /* Set the current bank's value */
     void setBankValue(int val) { 
-      _bankVals[_bank] = val;
+      setBankValue(_bank, val);
     }
 
     /* Set a particular bank's value */
@@ -324,7 +325,7 @@ class MultiControl {
 
     /* Check if the bank has changed and if so, set the pot and switch to latch 
     * so as not to update until the value passes the previous value of that bank.
-    * Returns -1 when the bank has changed and the value should not be updated.
+    * Return -1 when the bank has changed and the value should not be updated.
     */
     int checkBank(int val) {
       if (_bankChanged) {
