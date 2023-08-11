@@ -143,6 +143,20 @@ class MultiControl {
       if (_controlType != _POT) {
         setControl(_POT);
       }
+      
+      // discard first read after pause
+      int readVal = analogRead(_pin);
+      if (readVal>>5 != _prevPotRead>>5 || readVal == 0 || readVal > 4000) {
+        unsigned long msNow = millis();
+        if (msNow - _readTime < 40) { // disgard first after pause
+          _avePotReadVal = (readVal + _prevPotRead) * 0.5f;
+          _prevPotRead = readVal;
+        }
+        _readTime = msNow;
+      }
+      int retVal = floatMap(_avePotReadVal, 0, 4096, 0, 1024);
+
+      
       /* // alternative, simpler but less smooth
       int readVal = analogRead(_pin);
       float readDiff = abs(readVal - _avePotReadVal);
@@ -152,6 +166,8 @@ class MultiControl {
       } 
       */
       
+      /*
+      // smooth by averaging the last 10 readings
       int tempPotVal = _potValue;
       int readVal = analogRead(_pin) >> 2;
       if (abs(readVal - _avePotReadVal) < 15 && readVal != 0 && readVal > 1000) readVal = _avePotReadVal;
@@ -182,6 +198,7 @@ class MultiControl {
       }
       _avePotReadVal = (int)_avePotReadVal >> 3;
       int retVal = slew(_avePotReadVal, _potValue, 0.2f);
+      */
       if (readVal == 0) {
         retVal = min(checkBank(readVal), retVal);
       } else retVal = checkBank(retVal);
@@ -295,6 +312,8 @@ class MultiControl {
     int _prevTouchVal = 0;
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch
     int _potValue = 0; // 0 - 1023
+    int _prevPotRead = 0; // 0 - 1023
+    unsigned long _readTime = 0;
     int * _potReadVals = new int[10];
     float _avePotReadVal = 0;
     uint8_t _potReadCnt = 0;
