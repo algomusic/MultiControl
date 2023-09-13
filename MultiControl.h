@@ -4,8 +4,12 @@
  * Manage ESP32 GPIO pins for buttons, dials,  and switches.
  * by Andrew R. Brown 2023
  * 
+ * Pot smoothing algorithms from the
+ * ResponsiveAnalogRead library by Damien Clarke (2016)
+ * https://github.com/dxinteractive/ResponsiveAnalogRead
+ * 
  * Designed for use with the ESP32 microcontroller, the OnBoard sProject PCB, and the Arduino IDE.
- * Assumes value ranges for 0 to 1023 for continuous control values (dials, ) and 0 or 1 for on/off states (buttons, switches).
+ * Assumes value ranges for 0 to 1023 for continuous control values (dials, cap touch) and 0 or 1 for on/off states (buttons, switches).
  * 
  * MultiControl is licensed under a Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International License.
  */
@@ -28,14 +32,12 @@ class MultiControl {
     * @param pin The GPIO pin number to use for the control.
     */
     MultiControl(uint8_t pin): _pin(pin) {
-      pinMode(pin, INPUT); // default to Touch
-      analogSetPinAttenuation(pin, ADC_11db); // ESP32
-      initBanks(_numBanks);
+      MultiControl(pin, 0);
     };
 
     /** Constructor. 
     * @param pin The GPIO pin number to use for the control.
-    * @param controlType The type of control: 0 = , 1 = potentiometer, 2 = button, 3 = switch
+    * @param controlType The type of control: 0 = touch, 1 = potentiometer, 2 = button, 3 = switch
     */
     MultiControl(uint8_t pin, uint8_t controlType): _pin(pin), _controlType(controlType) {
       setPin(pin);
@@ -105,8 +107,6 @@ class MultiControl {
       return _touchState;
     }
 
-    void setbuttonValue(bool value) { _buttonValue = value; } // 0 or false is off, 1 or true is on
-
     void setButtonValue(bool value) { _buttonValue = value; } // 0 or false is off, 1 or true is on
 
     /* Read the button value 
@@ -143,62 +143,11 @@ class MultiControl {
       if (_controlType != _POT) {
         setControl(_POT);
       }
-      
-      // discard first read after pause
-      int readVal = analogRead(_pin);
-      if (readVal>>5 != _prevPotRead>>5 || readVal == 0 || readVal > 4000) {
-        unsigned long msNow = millis();
-        if (msNow - _readTime < 40) { // disgard first after pause
-          _avePotReadVal = (readVal + _prevPotRead) * 0.5f;
-          _prevPotRead = readVal;
-        }
-        _readTime = msNow;
-      }
-      int retVal = floatMap(_avePotReadVal, 0, 4096, 0, 1024);
 
+      int readVal = analogRead(_pin) + analogRead(_pin);
+      responsiveUpdate(readVal >> 4); // 3
+      int retVal = responsiveValue * 2;
       
-      /* // alternative, simpler but less smooth
-      int readVal = analogRead(_pin);
-      float readDiff = abs(readVal - _avePotReadVal);
-      if (readDiff > 75 || readVal == 0 || readVal > 4000) {
-        _avePotReadVal = (readVal + _avePotReadVal * 2) * 0.33f;
-        // Serial.print(aveVal); Serial.print(" ");Serial.print(readDiff);Serial.print(" ");
-      } 
-      */
-      
-      /*
-      // smooth by averaging the last 10 readings
-      int tempPotVal = _potValue;
-      int readVal = analogRead(_pin) >> 2;
-      if (abs(readVal - _avePotReadVal) < 15 && readVal != 0 && readVal > 1000) readVal = _avePotReadVal;
-      // smooth by averaging the last 10 readings
-      _potReadVals[_potReadCnt] = readVal;
-      _potReadCnt++;
-      if (_potReadCnt >= 10) {
-        _potReadCnt = 0;
-      }
-      int minVal = 1023;
-      int maxVal = 0;
-      int minIndex = 0;
-      int maxIndex = 1;
-      for (int i = 0; i < 10; i++) {
-        int val = _potReadVals[i];
-        if (val < minVal) {
-          minVal = val;
-          minIndex = i;
-        }
-        if (val > maxVal) {
-          maxVal = val;
-          maxIndex = i;
-        }
-      }
-      _avePotReadVal = 0;
-      for (int i = 0; i < 10; i++) {
-        if (i != minIndex || i != maxIndex) _avePotReadVal += _potReadVals[i];
-      }
-      _avePotReadVal = (int)_avePotReadVal >> 3;
-      int retVal = slew(_avePotReadVal, _potValue, 0.2f);
-      */
       if (readVal == 0) {
         retVal = min(checkBank(readVal), retVal);
       } else retVal = checkBank(retVal);
@@ -240,6 +189,7 @@ class MultiControl {
 
     /* Sepcify the control value on the controller type */
     void setValue(int type, int val) {
+      val = max(0, min(1024, val));
       _bankVals[_bank] = val;
       _controlType = type;
       if (_controlType == 0) _touchValue = val;
@@ -330,6 +280,20 @@ class MultiControl {
     bool _latchAbove = false;
     int _firstLatchVal = -1;
     bool _firstLatchChanged = false;
+    // responsive read variables
+    int analogResolution = 512; //256; //127; //1024;
+    float snapMultiplier = 0.05; // 0.01
+    bool sleepEnable = true;
+    float activityThreshold = 4.0;
+    bool edgeSnapEnable = true;
+    float smoothValue;
+    unsigned long lastActivityMS;
+    float errorEMA = 0.0;
+    bool sleeping = false;
+    int rawValue;
+    int responsiveValue;
+    int prevResponsiveValue;
+    bool responsiveValueHasChanged;
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
@@ -371,7 +335,62 @@ class MultiControl {
       return min(1023, val);
     }
 
+    /* responive read functions */
+    void responsiveUpdate(int rawValueRead) {
+      rawValue = rawValueRead;
+      prevResponsiveValue = responsiveValue;
+      responsiveValue = getResponsiveValue(rawValue);
+      responsiveValueHasChanged = responsiveValue != prevResponsiveValue;
+    }
+
+    int getResponsiveValue(int newValue) {
+      if(sleepEnable && edgeSnapEnable) {
+        if(newValue < activityThreshold) {
+          newValue = (newValue * 2) - activityThreshold;
+        } else if(newValue > analogResolution - activityThreshold) {
+          newValue = (newValue * 2) - analogResolution + activityThreshold;
+        }
+      }
+      unsigned int diff = abs(newValue - smoothValue);
+      errorEMA += ((newValue - smoothValue) - errorEMA) * 0.4;
+      if(sleepEnable) {
+        sleeping = abs(errorEMA) < activityThreshold;
+      }
+      if(sleepEnable && sleeping) {
+        return (int)smoothValue;
+      }
+      float snap = snapCurve(diff * snapMultiplier);
+      if(sleepEnable) {
+        snap *= 0.5 + 0.5;
+      }
+      smoothValue += (newValue - smoothValue) * snap;
+      if(smoothValue < 0.0) {
+        smoothValue = 0.0;
+      } else if(smoothValue > analogResolution - 1) {
+        smoothValue = analogResolution - 1;
+      }
+      return (int)smoothValue;
+    }
+
+    float snapCurve(float x) {
+      float y = 1.0 / (x + 1.0);
+      y = (1.0 - y) * 2.0;
+      if(y > 1.0) {
+        return 1.0;
+      }
+      return y;
+    }
+
+    void setSnapMultiplier(float newMultiplier) {
+      if(newMultiplier > 1.0) {
+        newMultiplier = 1.0;
+      }
+      if(newMultiplier < 0.0) {
+        newMultiplier = 0.0;
+      }
+      snapMultiplier = newMultiplier;
+    }
+
 };
 
 #endif /* MULTICONTROL_H_ */
-
