@@ -223,7 +223,7 @@ class MultiControl {
       _bankChanged = true;
       _latchAbove = false;
       _latchBelow = false;
-      Serial.println("Bank changed. Current bank: " + String(_bank) + " Value: " + String(getValue()));
+      // Serial.println("Bank changed. Current bank: " + String(_bank) + " Value: " + String(getValue()));
     }
 
     /* Get the current bank */
