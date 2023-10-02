@@ -308,7 +308,8 @@ class MultiControl {
 
     /* Check if the bank has changed and if so, set the pot and switch to latch 
     * so as not to update until the value passes the previous value of that bank.
-    * Return -1 when the bank has changed and the value should not be updated.
+    * Return -1 or -2 when the bank has changed and the value should not be updated.
+    * -1 means the value is below the bank value, -2 means the value is above the bank value.
     */
     int checkBank(int val) {
       if (_bankChanged) {
@@ -330,7 +331,11 @@ class MultiControl {
           _bankChanged = false;
           _firstLatchVal = -1; // reset
           _firstLatchChanged = false;
-        } else val = -1; // don't return anything
+        } else { // don't return anything until the bank has changed
+          if (val < getBankValue()) {
+            val = -1; // below val
+          } else val = -2; // above val
+        }
       } 
       return min(1023, val);
     }
