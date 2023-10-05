@@ -246,6 +246,11 @@ class MultiControl {
       return getValue(); 
     }
 
+    /* Geta particular bank's value */
+    int getBankValue(int bank) { 
+      return _bankVals[bank]; 
+    }
+
     /* Set the changed status of a bank */
     void setBankChanged(bool val) { 
       _bankChanged = val;
