@@ -80,10 +80,13 @@ class MultiControl {
       }
       int readVal = touchRead(_pin)>>8;
       if (readVal < _minTouchVal) _minTouchVal = readVal;
-      if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 4;
+      if (readVal > _maxTouchVal) {
+        _maxTouchVal = _minTouchVal * 4;
+        readVal = _maxTouchVal;
+      }
       int tVal = 0;
-      if (readVal > _minTouchVal) {
-        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 1.5) * 1023.0f;
+      if (readVal > _minTouchVal + 15) {
+        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 0.4) * 1023.0f;
       }
       tVal = min(1024, tVal);
       _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
