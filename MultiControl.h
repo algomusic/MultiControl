@@ -80,13 +80,10 @@ class MultiControl {
       }
       int readVal = touchRead(_pin)>>8;
       if (readVal < _minTouchVal) _minTouchVal = readVal;
-      if (readVal > _maxTouchVal) {
-        _maxTouchVal = _minTouchVal * 4;
-        readVal = _maxTouchVal;
-      }
+      if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 4;
       int tVal = 0;
-      if (readVal > _minTouchVal + 15) {
-        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 0.4) * 1023.0f;
+      if (readVal > _minTouchVal) {
+        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 1.5) * 1023.0f;
       }
       tVal = min(1024, tVal);
       _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
@@ -235,7 +232,7 @@ class MultiControl {
     }
 
     /* Set the current bank's value */
-    void setBankValue(int val) { 
+    void setCurrentBankValue(int val) { 
       setBankValue(_bank, val);
     }
 
@@ -245,7 +242,7 @@ class MultiControl {
     }
 
     /* Get the current bank's value */
-    int getBankValue() { 
+    int getCurrentBankValue() { 
       return getValue(); 
     }
 
@@ -326,12 +323,12 @@ class MultiControl {
           _firstLatchChanged = true;
         }
         if (!_latchAbove) {
-          if (val >= getBankValue()) {
+          if (val >= getCurrentBankValue()) {
             _latchAbove = true;
           }
         }
         if (!_latchBelow) {
-          if (val <= getBankValue()) {
+          if (val <= getCurrentBankValue()) {
             _latchBelow = true;
           }
         }
@@ -340,7 +337,7 @@ class MultiControl {
           _firstLatchVal = -1; // reset
           _firstLatchChanged = false;
         } else { // don't return anything until the bank has changed
-          if (val < getBankValue()) {
+          if (val < getCurrentBankValue()) {
             val = -1; // below val
           } else val = -2; // above val
         }
