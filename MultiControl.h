@@ -20,6 +20,7 @@
 int multiControlAnyTouchPressed = 0;
 int multiControlAnyButtonPressed = 0;
 int multiControlAnyPressed = 0;
+float MAX_10_INV = 0.0009765625f;
 
 class MultiControl {
   public:
@@ -83,7 +84,7 @@ class MultiControl {
       if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 4;
       int tVal = 0;
       if (readVal > _minTouchVal) {
-        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 1.5) * 1023.0f;
+        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 3) * 1023.0f;
       }
       tVal = min(1024, tVal);
       _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
