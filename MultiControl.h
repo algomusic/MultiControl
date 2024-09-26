@@ -324,7 +324,7 @@ class MultiControl {
           _firstLatchChanged = true;
         }
         if (!_latchAbove) {
-          if (val >= getCurrentBankValue()) {
+          if (val >= getCurrentBankValue() || (val > 1000 && getCurrentBankValue() > 1000)) {
             _latchAbove = true;
           }
         }
