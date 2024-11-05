@@ -79,12 +79,12 @@ class MultiControl {
       if (_controlType != _TOUCH) {
         setControl(_TOUCH);
       }
-      int readVal = touchRead(_pin)>>8;
-      if (readVal < _minTouchVal) _minTouchVal = readVal;
-      if (readVal > _maxTouchVal) _maxTouchVal = _minTouchVal * 4;
+      int readValue = touchRead(_pin)>>8;
+      if (readValue < _minTouchValue) _minTouchValue = readValue;
+      if (readValue > _maxTouchValue) _maxTouchValue = _minTouchValue * 4;
       int tVal = 0;
-      if (readVal > _minTouchVal) {
-        tVal = pow((readVal - _minTouchVal) / (float)(_maxTouchVal - _minTouchVal), 3) * 1023.0f;
+      if (readValue > _minTouchValue) {
+        tVal = pow((readValue - _minTouchValue) / (float)(_maxTouchValue - _minTouchValue), 3) * 1023.0f;
       }
       tVal = min(1024, tVal);
       _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
@@ -133,7 +133,9 @@ class MultiControl {
 
     bool isPressed() {
       readButton();
-      return _buttonValue;
+      bool returnVal = false;
+      if (_buttonValue == 0) returnVal = true;
+      return returnVal;
     }
 
     /* Read the potentiometer value 
@@ -145,12 +147,12 @@ class MultiControl {
         setControl(_POT);
       }
 
-      int readVal = analogRead(_pin) + analogRead(_pin);
-      responsiveUpdate(readVal >> 4); // 3
+      int readValue = analogRead(_pin) + analogRead(_pin);
+      responsiveUpdate(readValue >> 4); // 3
       int retVal = responsiveValue * 2;
       
-      if (readVal == 0) {
-        retVal = min(checkBank(readVal), retVal);
+      if (readValue == 0) {
+        retVal = min(checkBank(readValue), retVal);
       } else retVal = checkBank(retVal);
       if (retVal >= 0) setValue(retVal);
       return retVal;
@@ -183,15 +185,32 @@ class MultiControl {
       return 0; // just in case
     }
 
+    /* Return the read value if changed since, else return -1 */
+    int changed() {
+      int returnVal = -1;
+      if (_controlType == 0) {
+        int newVal = readTouch();
+        if (newVal != _prevTouchVal) returnVal = newVal;
+      }
+      if (_controlType == 2) {
+        int newVal = readButton();
+        if (newVal != _prevButtonValue) {
+          returnVal = newVal;
+          _prevButtonValue = newVal;
+        }
+      }
+      return returnVal;
+    }
+
     /* Return the control value on the controller type */
     int getValue() {
-      return _bankVals[_bank]; 
+      return _bankValues[_bank]; 
     }
 
     /* Sepcify the control value on the controller type */
     void setValue(int type, int val) {
       val = max(0, min(1024, val));
-      _bankVals[_bank] = val;
+      _bankValues[_bank] = val;
       _controlType = type;
       if (_controlType == 0) _touchValue = val;
       if (_controlType == 1) _potValue = val;
@@ -210,10 +229,10 @@ class MultiControl {
     */
     void initBanks(int numBanks) {
       _numBanks = numBanks;
-      delete[] _bankVals;
-      _bankVals = new int[_numBanks];
+      delete[] _bankValues;
+      _bankValues = new int[_numBanks];
       for (int i=0; i<_numBanks; i++) {
-        _bankVals[i] = 0;
+        _bankValues[i] = 0;
       }
       _bank = 0;
     }
@@ -239,7 +258,7 @@ class MultiControl {
 
     /* Set a particular bank's value */
     void setBankValue(int bank, int val) { 
-      _bankVals[bank] = val;
+      _bankValues[bank] = val;
     }
 
     /* Get the current bank's value */
@@ -249,7 +268,7 @@ class MultiControl {
 
     /* Geta particular bank's value */
     int getBankValue(int bank) { 
-      return _bankVals[bank]; 
+      return _bankValues[bank]; 
     }
 
     /* Set the changed status of a bank */
@@ -262,9 +281,10 @@ class MultiControl {
     uint8_t _pin = 0;
     int _touchValue = 0; // 0 - 1023
     int8_t _touchState = false; // 0 or 1, true is touched
-    int8_t _buttonValue = false; // 0 or 1, true is pressed
-    int _minTouchVal = 1024; 
-    int _maxTouchVal = 0; 
+    int8_t _buttonValue = 0; // 0 or 1, true (1) is pressed
+    int8_t _prevButtonValue = 0;
+    int _minTouchValue = 1024; 
+    int _maxTouchValue = 0; 
     int _prevTouchVal = 0;
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch
     int _potValue = 0; // 0 - 1023
@@ -279,12 +299,12 @@ class MultiControl {
     const static uint8_t _BUTTON = 2;
     const static uint8_t _SWITCH = 3;
     int _numBanks = 8;
-    int * _bankVals = new int[_numBanks];
+    int * _bankValues = new int[_numBanks];
     uint8_t _bank = 0;
     bool _bankChanged = true;
     bool _latchBelow = false;
     bool _latchAbove = false;
-    int _firstLatchVal = -1;
+    int _firstLatchValue = -1;
     bool _firstLatchChanged = false;
     // responsive read variables
     int analogResolution = 512; //256; //127; //1024;
@@ -319,8 +339,8 @@ class MultiControl {
     */
     int checkBank(int val) {
       if (_bankChanged) {
-        if(_firstLatchVal == -1) _firstLatchVal = val;
-        if (val != _firstLatchVal) {
+        if(_firstLatchValue == -1) _firstLatchValue = val;
+        if (val != _firstLatchValue) {
           _firstLatchChanged = true;
         }
         if (!_latchAbove) {
@@ -335,7 +355,7 @@ class MultiControl {
         }
         if (_latchAbove && _latchBelow && _firstLatchChanged) {
           _bankChanged = false;
-          _firstLatchVal = -1; // reset
+          _firstLatchValue = -1; // reset
           _firstLatchChanged = false;
         } else { // don't return anything until the bank has changed
           if (val < getCurrentBankValue()) {
