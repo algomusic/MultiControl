@@ -87,11 +87,11 @@ class MultiControl {
         tVal = pow((readValue - _minTouchValue) / (float)(_maxTouchValue - _minTouchValue), 3) * 1023.0f;
       }
       tVal = min(1024, tVal);
-      _prevTouchVal = (_prevTouchVal + tVal) * 0.5f;
-      if (_prevTouchVal < 10) _prevTouchVal = 0;
-      _touchValue = _prevTouchVal;
+      _prevTouchValue = (_prevTouchValue + tVal) * 0.5f;
+      if (_prevTouchValue < 10) _prevTouchValue = 0;
+      _touchValue = _prevTouchValue;
       bool prevTState = _touchState;
-      _touchState = _prevTouchVal > 0;
+      _touchState = _prevTouchValue > 0;
       if (prevTState == true && _touchState == false) {
         multiControlAnyTouchPressed -= 1;
       } 
@@ -185,12 +185,18 @@ class MultiControl {
       return 0; // just in case
     }
 
-    /* Return the read value if changed since, else return -1 */
-    int changed() {
+    /* Return the read value if changed, otherwise return -1 */
+    int readChanged() {
       int returnVal = -1;
       if (_controlType == 0) {
+        int prevVal = _prevTouchValue;
         int newVal = readTouch();
-        if (newVal != _prevTouchVal) returnVal = newVal;
+        if (newVal != prevVal) returnVal = newVal;
+      }
+      if (_controlType == 1) {
+        int prevVal = _potValue;
+        int newVal = readPot();
+        if (newVal != prevVal) returnVal = newVal;
       }
       if (_controlType == 2) {
         int newVal = readButton();
@@ -198,6 +204,11 @@ class MultiControl {
           returnVal = newVal;
           _prevButtonValue = newVal;
         }
+      }
+      if (_controlType == 3) {
+        int8_t prevVal = _switchValue;
+        int8_t newVal = readSwitch();
+        if (newVal != prevVal) returnVal = newVal;
       }
       return returnVal;
     }
@@ -285,10 +296,10 @@ class MultiControl {
     int8_t _prevButtonValue = 0;
     int _minTouchValue = 1024; 
     int _maxTouchValue = 0; 
-    int _prevTouchVal = 0;
+    int _prevTouchValue = 0;
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch
     int _potValue = 0; // 0 - 1023
-    int _prevPotRead = 0; // 0 - 1023
+    // int _prevPotRead = 0; // 0 - 1023
     unsigned long _readTime = 0;
     int * _potReadVals = new int[10];
     float _avePotReadVal = 0;
