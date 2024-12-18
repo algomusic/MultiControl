@@ -3,23 +3,29 @@
 MultiControl controlPads[14];
 
 // for S3 LED
-#include <FastLED.h>
-#define NUM_LEDS 1
-#define DATA_PIN 47 // 47 for Lolin S3 mini // 21 for Waveshare S3 pico
-// #define CLOCK_PIN 13
-CRGB leds[NUM_LEDS];
+// for S3 LED
+#include <Adafruit_NeoPixel.h>
+#define PIN 47
+#define NUMPIXELS 1
+Adafruit_NeoPixel pixels(NUMPIXELS, PIN, NEO_RGB + NEO_KHZ800);
 
-int s = 12;
-int t = 14;
-int b = 7;
+void updateLED(uint8_t r, uint8_t g, uint8_t b) {
+  pixels.setPixelColor(0, pixels.Color(r, g, b));
+  pixels.show();
+}
+
+int s = 12; // switch pad
+int t = 8; // touch pad
+int b = 13; // button pad
 
 void setup() {
   Serial.begin(115200);
   delay(1000); // give time to bring up serial monitor
-  for (int i=0; i<14; i++) { // setup the GPIO pins
+  for (int i=0; i<15; i++) { // setup the GPIO pins
     controlPads[i].setPin(i+1);
   }
-  FastLED.addLeds<SM16703, DATA_PIN, RGB>(leds, NUM_LEDS); // set up S3 LED
+  pixels.setBrightness(100); // 0 - 255
+  updateLED(255, 0, 0); // set up S3 LED
   Serial.println("ESP32 MiltiControl Test");
 }
 
@@ -29,17 +35,13 @@ void loop() {
     Serial.print(" touched: ");Serial.print(controlPads[t-1].isTouched());
     Serial.print(" touch: ");Serial.print(controlPads[t-1].readTouch());
     Serial.print(" switch: ");Serial.print(controlPads[s-1].readSwitch());
-    if (controlPads[s-1].getValue() == 0) {
-      leds[0] = CRGB::Red;
-    } else leds[0] = CRGB::Green;
-    FastLED.show();
-    Serial.print(" pot: ");Serial.print(controlPads[0].readPot());
-    Serial.print(" pot: ");Serial.print(controlPads[1].readPot());
-    Serial.print(" pot: ");Serial.print(controlPads[2].readPot());
-    Serial.print(" pot: ");Serial.print(controlPads[3].readPot());
+    if (controlPads[b-1].getValue() == 0 || controlPads[t-1].getValue() > 0) { // button/touch changes LED color
+      updateLED(0, 255, 0);
+    } else updateLED(255, 0, 0);
+    Serial.print(" pot 0: ");Serial.print(controlPads[0].readPot());
+    Serial.print(" pot 1: ");Serial.print(controlPads[1].readPot());
+    Serial.print(" pot 2: ");Serial.print(controlPads[2].readPot());
+    Serial.print(" pot 3: ");Serial.print(controlPads[3].readPot());
     Serial.println();
-  // some globals
-  // Serial.print(" Button poly: ");Serial.println(multiControlAnyButtonPressed);
-  // Serial.print(" Touch poly: ");Serial.println(multiControlAnyTouchPressed);
   delay(249);
 }
