@@ -38,34 +38,68 @@ class MultiControl {
 
     /** Constructor. 
     * @param pin The GPIO pin number to use for the control.
-    * @param controlType The type of control: 0 = touch, 1 = potentiometer, 2 = button, 3 = switch
+    * @param controlType The type of control: 0 = touch, 1 = potentiometer, 2 = button, 3 = switch, 4 = muxButton
+    * Note that muxButton requires also setting the muxControlPins and muxChannel
     */
     MultiControl(uint8_t pin, uint8_t controlType): _pin(pin), _controlType(controlType) {
       setPin(pin);
       setControl(controlType);
-      analogSetPinAttenuation(pin, ADC_11db); // ESP32
+      // analogSetPinAttenuation(pin, ADC_11db); // ESP32
       initBanks(_numBanks);
     };
 
-    /* Set the GPIO pin to use for this control
-    * @param pin The GPIO pin number to use for the control.
+    /* Set the GPIO pin to use for multiplex control
+    * @param pin1 The GPIO pin number to use for the control.
     */
     void setPin(uint8_t pin) { 
       _pin = pin; 
-      analogSetPinAttenuation(_pin, ADC_11db); // ESP32
+      // analogSetPinAttenuation(_pin, ADC_11db); // ESP32
     }
 
     uint8_t getPin() { return _pin; }
+
+    /* Set the GPIO pins to use for this control
+    * Tested with CD4051
+    * @param pin1 The GPIO pin number to use for the LSB.
+    * @param pin2 The GPIO pin number to use for the middle bit.
+    * @param pin3 The GPIO pin number to use for the MSB.
+    */
+    void setMuxControlPins(uint8_t pin1, uint8_t pin2, uint8_t pin3) {
+      if (_controlType != _MUX_BUTTON) {
+        setControl(_MUX_BUTTON);
+      }
+      _muxControlPins[0] = pin1;
+      _muxControlPins[1] = pin2;
+      _muxControlPins[2] = pin3;
+      // Setup MUX control pins
+      for (int i = 0; i < 3; i++) {
+        pinMode(_muxControlPins[i], OUTPUT);
+      }
+    }
+
+    /* Set the GPIO pin to use for multiplex channel
+    * @param chan The GPIO pin number to use for the mux channel.
+    */
+    void setMuxChannel(uint8_t chan) {
+      if (_controlType != _MUX_BUTTON) {
+        setControl(_MUX_BUTTON);
+      }
+      _muxChannel = chan; 
+    }
+
+    uint8_t getMuxChannel() { 
+      return _muxChannel; 
+    }
 
     /* Set the type of control.
     * @param controlType The type of control: 0 = touch, 1 = pot, 2 = button, 3 = switch
     */
     void setControl(uint8_t controlType) { 
       _controlType = controlType; 
-      if (controlType == _SWITCH || controlType == _BUTTON) {
+      if (controlType == _SWITCH || controlType == _BUTTON ) {
         pinMode(_pin, INPUT_PULLUP); // for buttons and switches
       }
-      else if (controlType == _TOUCH || controlType == _POT) {
+      else if (controlType == _POT || controlType == _TOUCH) {
         pinMode(_pin, INPUT); // for touch or potentiometer
         digitalWrite(_pin, LOW); // disable internal pullup if set
       }
@@ -132,10 +166,34 @@ class MultiControl {
     }
 
     bool isPressed() {
-      readButton();
+      uint8_t val = 1;
+      if (_controlType == 2) val = readButton();
+      if (_controlType == 4) val = readMuxButton();
       bool returnVal = false;
-      if (_buttonValue == 0) returnVal = true;
+      if (val == 0) returnVal = true;
       return returnVal;
+    }
+
+    /* Read the mutiplexed button value 
+    * @return The button value: 0 or false is off, 1 or true is on
+    */
+    inline int readMuxButton() {
+      if (_controlType != _MUX_BUTTON) {
+        setControl(_MUX_BUTTON);
+      }
+      muxWrite();
+      delayMicroseconds(10); // Allow MUX to settle
+      int val = digitalRead(_pin);
+      if (val == 0 && _buttonValue == false) {
+        _buttonValue = true;
+        multiControlAnyButtonPressed += 1;
+      }
+      if (val == 1 && _buttonValue == true) {
+        _buttonValue = false; 
+        multiControlAnyButtonPressed -= 1;
+      }
+      setValue(val);
+      return val;
     }
 
     /* Read the potentiometer value 
@@ -182,6 +240,7 @@ class MultiControl {
       if (_controlType == 1) return readPot();
       if (_controlType == 2) return readButton();
       if (_controlType == 3) return readSwitch();
+      if (_controlType == 4) return readMuxButton();
       return 0; // just in case
     }
 
@@ -209,6 +268,13 @@ class MultiControl {
         int8_t prevVal = _switchValue;
         int8_t newVal = readSwitch();
         if (newVal != prevVal) returnVal = newVal;
+      }
+      if (_controlType == 4) {
+        int newVal = readMuxButton();
+        if (newVal != _prevButtonValue) {
+          returnVal = newVal;
+          _prevButtonValue = newVal;
+        }
       }
       return returnVal;
     }
@@ -297,7 +363,7 @@ class MultiControl {
     int _minTouchValue = 1024; 
     int _maxTouchValue = 0; 
     int _prevTouchValue = 0;
-    uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch
+    uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton
     int _potValue = 0; // 0 - 1023
     // int _prevPotRead = 0; // 0 - 1023
     unsigned long _readTime = 0;
@@ -309,6 +375,7 @@ class MultiControl {
     const static uint8_t _POT = 1;
     const static uint8_t _BUTTON = 2;
     const static uint8_t _SWITCH = 3;
+    const static uint8_t _MUX_BUTTON = 4;
     int _numBanks = 8;
     int * _bankValues = new int[_numBanks];
     uint8_t _bank = 0;
@@ -331,6 +398,8 @@ class MultiControl {
     int responsiveValue;
     int prevResponsiveValue;
     bool responsiveValueHasChanged;
+    uint8_t * _muxControlPins = new uint8_t[3];
+    uint8_t _muxChannel = 0;
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
@@ -432,6 +501,15 @@ class MultiControl {
       }
       snapMultiplier = newMultiplier;
     }
+
+    // Set to MUX control pins for the current channel
+    void muxWrite() {
+      for (int mux = 0; mux < 3; mux++) {
+        int pinState = bitRead(_muxChannel, mux);
+        digitalWrite(_muxControlPins[mux], pinState);
+      }
+    }
+  // }
 
 };
 
