@@ -126,25 +126,13 @@ class MultiControl {
       if (_controlType != _TOUCH) {
         setControl(_TOUCH);
       }
-      int readValue = touchRead(_pin)>>8;
-      if (readValue < _minTouchValue) _minTouchValue = readValue;
-      if (readValue > _maxTouchValue) _maxTouchValue = _minTouchValue * 4;
-      int tVal = 0;
-      if (readValue > _minTouchValue) {
-        tVal = pow((readValue - _minTouchValue) / (float)(_maxTouchValue - _minTouchValue), 3) * 1023.0f;
-      }
-      tVal = min(1024, tVal);
-      _prevTouchValue = (_prevTouchValue + tVal) * 0.5f;
-      if (_prevTouchValue < 10) _prevTouchValue = 0;
-      _touchValue = _prevTouchValue;
-      bool prevTState = _touchState;
-      _touchState = _prevTouchValue > 0;
-      if (prevTState == true && _touchState == false) {
-        multiControlAnyTouchPressed -= 1;
-      } 
-      if (prevTState == false && _touchState == true) {
-         multiControlAnyTouchPressed += 1;
-      }
+      _touchValue = touchRead(_pin)>>8;
+      if (_touchValue < _touchBaseline) _touchBaseline = _touchValue;
+      // Serial.println("_touchBaseline " + String(_touchBaseline));
+      if (_touchValue > (_touchBaseline + 5)) {
+        _touchState = true;
+      } else _touchState = false;
+      _touchValue = min(1024, (_touchValue - _touchBaseline) * 10); // scale to 1024
       setValue(_touchValue);
       return _touchValue;
     }
@@ -415,6 +403,7 @@ class MultiControl {
     bool responsiveValueHasChanged;
     uint8_t * _muxControlPins = new uint8_t[3];
     uint8_t _muxChannel = 0;
+    uint16_t _touchBaseline = 100000;
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
