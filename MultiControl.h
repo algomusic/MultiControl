@@ -248,7 +248,7 @@ class MultiControl {
 
     /* Return the read value if changed, otherwise return -1 */
     int readChanged() {
-      Serial.println("readChanged");
+      // Serial.println("readChanged");
       int returnVal = -1;
       if (_controlType == 0) {
         int prevVal = _prevTouchValue;
@@ -433,7 +433,7 @@ class MultiControl {
           }
         }
         if (!_latchBelow) {
-          if (val <= getCurrentBankValue()) {
+          if (val <= getCurrentBankValue() || (getCurrentBankValue() == 0 && val < 10)) {
             _latchBelow = true;
           }
         }
