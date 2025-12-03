@@ -158,10 +158,16 @@ class MultiControl {
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        // Check for double-click on press
+        if (millis() - _lastReleaseTime < _doubleClickTime) {
+          _doubleClicked = true;
+        }
       }
       if (val == 1 && _buttonValue == true) {
-        _buttonValue = false; 
+        _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
+        // Record release time for double-click detection
+        _lastReleaseTime = millis();
       }
       setValue(val);
       return val;
@@ -176,7 +182,30 @@ class MultiControl {
       return returnVal;
     }
 
-    /* Read the mutiplexed button value 
+    /** Check if the button was double-clicked
+     * Call this after isPressed() in your button handling code.
+     * Returns true only once per double-click event (on the second press).
+     * @return true if double-click detected, false otherwise
+     */
+    bool isDoubleClicked() {
+      bool result = _doubleClicked;
+      _doubleClicked = false;  // Clear after reading
+      return result;
+    }
+
+    /** Set the double-click detection time window
+     * @param ms Time window in milliseconds (default 300)
+     */
+    void setDoubleClickTime(unsigned long ms) {
+      _doubleClickTime = ms;
+    }
+
+    /** Get the current double-click time window */
+    unsigned long getDoubleClickTime() {
+      return _doubleClickTime;
+    }
+
+    /* Read the mutiplexed button value
     * @return The button value: 0 or false is off, 1 or true is on
     */
     inline int readMuxButton() {
@@ -189,10 +218,16 @@ class MultiControl {
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        // Check for double-click on press
+        if (millis() - _lastReleaseTime < _doubleClickTime) {
+          _doubleClicked = true;
+        }
       }
       if (val == 1 && _buttonValue == true) {
-        _buttonValue = false; 
+        _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
+        // Record release time for double-click detection
+        _lastReleaseTime = millis();
       }
       setValue(val);
       return val;
@@ -403,6 +438,10 @@ class MultiControl {
     int8_t _touchState = false; // 0 or 1, true is touched
     int8_t _buttonValue = 0; // 0 or 1, true (1) is pressed
     int8_t _prevButtonValue = 0;
+    // Double-click detection
+    unsigned long _lastReleaseTime = 0;  // timestamp of last button release
+    unsigned long _doubleClickTime = 300;  // ms window for double-click detection
+    bool _doubleClicked = false;  // flag set when double-click detected
     int _minTouchValue = 1024; 
     int _maxTouchValue = 0; 
     int _prevTouchValue = 0;
