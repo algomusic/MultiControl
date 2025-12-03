@@ -198,7 +198,7 @@ class MultiControl {
       return val;
     }
 
-    /* Read the potentiometer value 
+    /* Read the potentiometer value
     * @return The potentiometer value: 0 to 1023, or -1 if bank has been changed
     */
     inline
@@ -207,10 +207,31 @@ class MultiControl {
         setControl(_POT);
       }
 
-      int readValue = analogRead(_pin) + analogRead(_pin);
-      responsiveUpdate(readValue >> 4); // 3
+      // Take 4 samples with settling time
+      int samples[4];
+      for (int s = 0; s < 4; s++) {
+        samples[s] = analogRead(_pin);
+        if (s < 3) delayMicroseconds(10);
+      }
+      // Simple sort for median of middle two (rejects outliers)
+      for (int i = 0; i < 3; i++) {
+        for (int j = i + 1; j < 4; j++) {
+          if (samples[j] < samples[i]) {
+            int tmp = samples[i];
+            samples[i] = samples[j];
+            samples[j] = tmp;
+          }
+        }
+      }
+      int readValue = samples[1] + samples[2];  // middle two values
+      responsiveUpdate(readValue >> 4);
       int retVal = responsiveValue * 2;
-      
+
+      // Output hysteresis - suppress small fluctuations except near edges
+      if (abs(retVal - _potValue) < 3 && retVal > 2 && retVal < 1020) {
+        retVal = _potValue;
+      }
+
       if (readValue == 0) {
         retVal = min(checkBank(readValue), retVal);
       } else retVal = checkBank(retVal);
@@ -368,11 +389,6 @@ class MultiControl {
     int _prevTouchValue = 0;
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton
     int _potValue = 0; // 0 - 1023
-    // int _prevPotRead = 0; // 0 - 1023
-    unsigned long _readTime = 0;
-    int * _potReadVals = new int[10];
-    float _avePotReadVal = 0;
-    uint8_t _potReadCnt = 0;
     int8_t _switchValue = 0; // 0 - 1
     const static uint8_t _TOUCH = 0;
     const static uint8_t _POT = 1;
@@ -388,19 +404,20 @@ class MultiControl {
     int _firstLatchValue = -1;
     bool _firstLatchChanged = false;
     // responsive read variables
-    int analogResolution = 512; //256; //127; //1024;
+    int analogResolution = 512; // 0-511 input range from readPot() >>4 shift
     float snapMultiplier = 0.05; // 0.01
     bool sleepEnable = true;
     float activityThreshold = 4.0;
     bool edgeSnapEnable = true;
-    float smoothValue;
-    unsigned long lastActivityMS;
+    float smoothValue = 0.0;
+    unsigned long lastActivityMS = 0;
     float errorEMA = 0.0;
     bool sleeping = false;
-    int rawValue;
-    int responsiveValue;
-    int prevResponsiveValue;
-    bool responsiveValueHasChanged;
+    int rawValue = 0;
+    int responsiveValue = 0;
+    int prevResponsiveValue = 0;
+    bool responsiveValueHasChanged = false;
+    bool _firstRead = true;
     uint8_t * _muxControlPins = new uint8_t[3];
     uint8_t _muxChannel = 0;
     uint16_t _touchBaseline = 100000;
@@ -453,6 +470,10 @@ class MultiControl {
     /* responive read functions */
     void responsiveUpdate(int rawValueRead) {
       rawValue = rawValueRead;
+      if (_firstRead) {
+        smoothValue = rawValue;  // sync to actual pot position on first read
+        _firstRead = false;
+      }
       prevResponsiveValue = responsiveValue;
       responsiveValue = getResponsiveValue(rawValue);
       responsiveValueHasChanged = responsiveValue != prevResponsiveValue;
@@ -465,6 +486,7 @@ class MultiControl {
         } else if(newValue > analogResolution - activityThreshold) {
           newValue = (newValue * 2) - analogResolution + activityThreshold;
         }
+        if(newValue < 0) newValue = 0;  // prevent negative values from edge snap
       }
       unsigned int diff = abs(newValue - smoothValue);
       errorEMA += ((newValue - smoothValue) - errorEMA) * 0.4;
@@ -475,9 +497,7 @@ class MultiControl {
         return (int)smoothValue;
       }
       float snap = snapCurve(diff * snapMultiplier);
-      if(sleepEnable) {
-        snap *= 0.5 + 0.5;
-      }
+      // Note: removed dead code (snap *= 0.5 + 0.5) which always equals 1.0
       smoothValue += (newValue - smoothValue) * snap;
       if(smoothValue < 0.0) {
         smoothValue = 0.0;
