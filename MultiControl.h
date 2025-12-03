@@ -223,6 +223,25 @@ class MultiControl {
           }
         }
       }
+
+      // Sticky edges - lock to 0 or 1023 when all samples are near extremes
+      if (samples[3] < 30) {  // all samples below 30 (sorted, so [3] is max)
+        responsiveValue = 0;
+        smoothValue = 0;
+        int retVal = 0;
+        retVal = checkBank(retVal);
+        if (retVal >= 0) setValue(retVal);
+        return retVal;
+      }
+      if (samples[0] > 4065) {  // all samples above 4065 (sorted, so [0] is min)
+        responsiveValue = 511;
+        smoothValue = 511;
+        int retVal = 1022;
+        retVal = checkBank(retVal);
+        if (retVal >= 0) setValue(retVal);
+        return retVal;
+      }
+
       int readValue = samples[1] + samples[2];  // middle two values
       responsiveUpdate(readValue >> 4);
       int retVal = responsiveValue * 2;
