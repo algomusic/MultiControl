@@ -379,14 +379,12 @@ class MultiControl {
     }
 
     // banks
-    /* Setup the number of banks. 
-    *  This will delete any existing banks.
+    /* Setup the number of banks (max 8).
+    *  Resets all bank values to 0.
     */
     void initBanks(int numBanks) {
-      _numBanks = numBanks;
-      delete[] _bankValues;
-      _bankValues = new int[_numBanks];
-      for (int i=0; i<_numBanks; i++) {
+      _numBanks = (numBanks > 8) ? 8 : numBanks;
+      for (int i = 0; i < 8; i++) {
         _bankValues[i] = 0;
       }
       _bank = 0;
@@ -456,7 +454,7 @@ class MultiControl {
     const static uint8_t _SWITCH = 3;
     const static uint8_t _MUX_BUTTON = 4;
     int _numBanks = 8;
-    int * _bankValues = new int[_numBanks];
+    int _bankValues[8] = {0};  // Static allocation (was dynamic new int[])
     uint8_t _bank = 0;
     bool _bankChanged = true;
     bool _latchBelow = false;
@@ -478,7 +476,7 @@ class MultiControl {
     int prevResponsiveValue = 0;
     bool responsiveValueHasChanged = false;
     bool _firstRead = true;
-    uint8_t * _muxControlPins = new uint8_t[3];
+    uint8_t _muxControlPins[3] = {0};  // Static allocation (was dynamic new uint8_t[])
     uint8_t _muxChannel = 0;
     uint16_t _touchBaseline = 100000;
 
