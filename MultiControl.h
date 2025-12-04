@@ -393,11 +393,13 @@ class MultiControl {
     }
 
     /* Choose the current bank */
-    void setBank(uint8_t bank) { 
-      _bank = bank % _numBanks; 
+    void setBank(uint8_t bank) {
+      _bank = bank % _numBanks;
       _bankChanged = true;
       _latchAbove = false;
       _latchBelow = false;
+      // Sync _potValue with new bank's value to ensure hysteresis works correctly
+      _potValue = _bankValues[_bank];
       // Serial.println("Bank changed. Current bank: " + String(_bank) + " Value: " + String(getValue()));
     }
 
