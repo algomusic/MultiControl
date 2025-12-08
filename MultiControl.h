@@ -259,6 +259,12 @@ class MultiControl {
         }
       }
 
+      // Detect floating/disconnected pin - samples too erratic
+      int sampleSpread = samples[3] - samples[0];  // max - min (sorted)
+      if (sampleSpread > _maxSampleSpread) {
+        return -3;  // unstable reading, likely floating pin
+      }
+
       // Sticky edges - lock to 0 or 1023 when all samples are near extremes
       if (samples[3] < 30) {  // all samples below 30 (sorted, so [3] is max)
         responsiveValue = 0;
@@ -467,6 +473,7 @@ class MultiControl {
     bool sleepEnable = true;
     float activityThreshold = 4.0;
     bool edgeSnapEnable = true;
+    int _maxSampleSpread = 50;  // max allowed spread between min/max samples (detects floating pins)
     float smoothValue = 0.0;
     unsigned long lastActivityMS = 0;
     float errorEMA = 0.0;
@@ -582,6 +589,14 @@ class MultiControl {
         newMultiplier = 0.0;
       }
       snapMultiplier = newMultiplier;
+    }
+
+    /** Set max allowed sample spread for floating pin detection
+     * @param spread Max difference between min/max of 4 samples (default 150)
+     *               Set to 4096 to disable floating pin detection
+     */
+    void setMaxSampleSpread(int spread) {
+      _maxSampleSpread = spread;
     }
 
     // Set to MUX control pins for the current channel
