@@ -120,24 +120,31 @@ class MultiControl {
       /* Retrieve the type of control in use */
     uint8_t getControl() { return _controlType; }
 
-    /* Read the touch value */
+    /* Read the touch value (ESP32 only - returns 0 on unsupported platforms) */
     inline
     int readTouch() {
-      if (_controlType != _TOUCH) {
-        setControl(_TOUCH);
-      }
-      _touchValue = touchRead(_pin)>>8;
-      if (_touchValue < _touchBaseline) _touchBaseline = _touchValue;
-      // Serial.println("_touchBaseline " + String(_touchBaseline));
-      if (_touchValue > (_touchBaseline + 5)) {
-        _touchState = true;
-      } else _touchState = false;
-      _touchValue = min(1024, (_touchValue - _touchBaseline) * 10); // scale to 1024
-      setValue(_touchValue);
-      return _touchValue;
+      #if defined(ESP32)
+        if (_controlType != _TOUCH) {
+          setControl(_TOUCH);
+        }
+        _touchValue = touchRead(_pin)>>8;
+        if (_touchValue < _touchBaseline) _touchBaseline = _touchValue;
+        // Serial.println("_touchBaseline " + String(_touchBaseline));
+        if (_touchValue > (_touchBaseline + 5)) {
+          _touchState = true;
+        } else _touchState = false;
+        _touchValue = min(1024, (_touchValue - _touchBaseline) * 10); // scale to 1024
+        setValue(_touchValue);
+        return _touchValue;
+      #else
+        // Touch not supported on this platform
+        _touchValue = 0;
+        _touchState = false;
+        return 0;
+      #endif
     }
 
-    /* Check if the control is touched or not */
+    /* Check if the control is touched or not (ESP32 only - returns false on unsupported platforms) */
     inline
     bool isTouched() {
       readTouch();
@@ -158,8 +165,15 @@ class MultiControl {
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        // Record press time for hold detection
+        _pressStartTime = millis();
+        _holdTriggered = false;
+        _held = false;
+        _wasHeldOnRelease = false;
+        _holdActionOccurred = false;
+        _hadHoldAction = false;
         // Check for double-click on press
-        if (millis() - _lastReleaseTime < _doubleClickTime) {
+        if (_pressStartTime - _lastReleaseTime < _doubleClickTime) {
           _doubleClicked = true;
         }
       }
@@ -168,6 +182,18 @@ class MultiControl {
         multiControlAnyButtonPressed -= 1;
         // Record release time for double-click detection
         _lastReleaseTime = millis();
+        // Save hold and action state before reset (for release checks)
+        _wasHeldOnRelease = _holdTriggered;
+        _hadHoldAction = _holdActionOccurred;
+        // Reset hold state on release
+        _holdTriggered = false;
+        _held = false;
+        _holdActionOccurred = false;
+      }
+      // Check for hold while pressed
+      if (_buttonValue && !_holdTriggered && (millis() - _pressStartTime >= _holdTime)) {
+        _held = true;
+        _holdTriggered = true;
       }
       setValue(val);
       return val;
@@ -203,6 +229,57 @@ class MultiControl {
     /** Get the current double-click time window */
     unsigned long getDoubleClickTime() {
       return _doubleClickTime;
+    }
+
+    /** Check if the button is being held
+     * Returns true only once per hold event (when hold time threshold is reached).
+     * @return true if hold detected, false otherwise
+     */
+    bool isHeld() {
+      bool result = _held;
+      _held = false;  // Clear after reading
+      return result;
+    }
+
+    /** Set the hold detection time threshold
+     * @param ms Time in milliseconds to trigger hold (default 500)
+     */
+    void setHoldTime(unsigned long ms) {
+      _holdTime = ms;
+    }
+
+    /** Get the current hold time threshold */
+    unsigned long getHoldTime() {
+      return _holdTime;
+    }
+
+    /** Check if button was held (for use on release - returns state from before reset) */
+    bool wasHeld() {
+      return _wasHeldOnRelease;
+    }
+
+    /** Notify that an external action occurred while button is pressed/held
+     * Call this when another control is moved while this button is pressed.
+     * Use isHeldAndActioned() to check, or hadHoldAction() on release.
+     */
+    void notifyHoldAction() {
+      if (_buttonValue) {  // Track from press, not just hold
+        _holdActionOccurred = true;
+      }
+    }
+
+    /** Check if button is currently held AND an action has occurred
+     * @return true if held and action notified, false otherwise
+     */
+    bool isHeldAndActioned() {
+      return _holdTriggered && _holdActionOccurred;
+    }
+
+    /** Check if action occurred during hold (for use on release)
+     * @return true if hold had an associated action, false otherwise
+     */
+    bool hadHoldAction() {
+      return _hadHoldAction;
     }
 
     /* Read the mutiplexed button value
@@ -433,8 +510,47 @@ class MultiControl {
     }
 
     /* Set the changed status of a bank */
-    void setBankChanged(bool val) { 
+    void setBankChanged(bool val) {
       _bankChanged = val;
+    }
+
+    // Latching API
+
+    /** Enable or disable latching when changing banks.
+     * When enabled (default), pot values are ignored after bank change until
+     * the physical pot position crosses the stored bank value.
+     * When disabled, pot values update immediately on bank change.
+     * @param enabled true to enable latching, false to disable
+     */
+    void setLatchEnabled(bool enabled) {
+      _latchEnabled = enabled;
+      if (!enabled) {
+        releaseLatch();
+      }
+    }
+
+    /** Check if latching is enabled */
+    bool isLatchEnabled() {
+      return _latchEnabled;
+    }
+
+    /** Manually release the current latch.
+     * Allows pot values to update immediately without needing to
+     * cross the stored bank value threshold.
+     */
+    void releaseLatch() {
+      _bankChanged = false;
+      _latchAbove = true;
+      _latchBelow = true;
+      _firstLatchValue = -1;
+      _firstLatchChanged = false;
+    }
+
+    /** Check if currently latched (waiting for pot to cross threshold).
+     * @return true if latched and ignoring pot movements, false if updating normally
+     */
+    bool isLatched() {
+      return _bankChanged && !(_latchAbove && _latchBelow && _firstLatchChanged);
     }
 
   private:
@@ -448,6 +564,14 @@ class MultiControl {
     unsigned long _lastReleaseTime = 0;  // timestamp of last button release
     unsigned long _doubleClickTime = 300;  // ms window for double-click detection
     bool _doubleClicked = false;  // flag set when double-click detected
+    // Hold detection
+    unsigned long _pressStartTime = 0;  // timestamp when button was pressed
+    unsigned long _holdTime = 500;  // ms to trigger hold
+    bool _held = false;  // flag set when hold detected
+    bool _holdTriggered = false;  // ensures hold only triggers once per press
+    bool _wasHeldOnRelease = false;  // preserved hold state for release detection
+    bool _holdActionOccurred = false;  // external action during hold
+    bool _hadHoldAction = false;  // preserved action state for release detection
     int _minTouchValue = 1024; 
     int _maxTouchValue = 0; 
     int _prevTouchValue = 0;
@@ -463,6 +587,7 @@ class MultiControl {
     int _bankValues[8] = {0};  // Static allocation (was dynamic new int[])
     uint8_t _bank = 0;
     bool _bankChanged = true;
+    bool _latchEnabled = true;  // Enable/disable latching on bank change
     bool _latchBelow = false;
     bool _latchAbove = false;
     int _firstLatchValue = -1;
@@ -485,7 +610,7 @@ class MultiControl {
     bool _firstRead = true;
     uint8_t _muxControlPins[3] = {0};  // Static allocation (was dynamic new uint8_t[])
     uint8_t _muxChannel = 0;
-    uint16_t _touchBaseline = 100000;
+    uint16_t _touchBaseline = 65535;  // Start high, will be reduced by actual readings
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
@@ -498,12 +623,18 @@ class MultiControl {
       return curr + dist * amt;
     }
 
-    /* Check if the bank has changed and if so, set the pot and switch to latch 
+    /* Check if the bank has changed and if so, set the pot and switch to latch
     * so as not to update until the value passes the previous value of that bank.
     * Return -1 or -2 when the bank has changed and the value should not be updated.
     * -1 means the value is below the bank value, -2 means the value is above the bank value.
     */
     int checkBank(int val) {
+      // Skip latching logic if disabled
+      if (!_latchEnabled) {
+        _bankChanged = false;
+        return min(1023, val);
+      }
+
       if (_bankChanged) {
         if(_firstLatchValue == -1) _firstLatchValue = val;
         if (val != _firstLatchValue) {
@@ -528,7 +659,7 @@ class MultiControl {
             val = -1; // below val
           } else val = -2; // above val
         }
-      } 
+      }
       return min(1023, val);
     }
 
