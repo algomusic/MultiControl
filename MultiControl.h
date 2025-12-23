@@ -127,13 +127,52 @@ class MultiControl {
         if (_controlType != _TOUCH) {
           setControl(_TOUCH);
         }
-        _touchValue = touchRead(_pin)>>8;
-        if (_touchValue < _touchBaseline) _touchBaseline = _touchValue;
-        // Serial.println("_touchBaseline " + String(_touchBaseline));
-        if (_touchValue > (_touchBaseline + 5)) {
-          _touchState = true;
-        } else _touchState = false;
-        _touchValue = min(1024, (_touchValue - _touchBaseline) * 10); // scale to 1024
+        _touchValue = touchRead(_pin) >> 8;
+
+        // Update baseline - only drift down immediately
+        if (_touchValue < _touchBaseline) {
+          _touchBaseline = _touchValue;
+        }
+
+        // Adaptive baseline: slowly drift up when not touched to handle environmental changes
+        if (!_touchState) {
+          _baselineDriftCounter++;
+          if (_baselineDriftCounter >= 50 && _touchValue > _touchBaseline) {  // ~200ms at 4ms polling
+            _touchBaseline++;
+            _baselineDriftCounter = 0;
+          }
+        } else {
+          _baselineDriftCounter = 0;  // Reset counter while touched
+        }
+
+        int delta = _touchValue - _touchBaseline;
+        bool newState = _touchState;  // Start with current state
+
+        // Hysteresis: use different thresholds for on vs off
+        if (_touchState) {
+          // Currently touched - use lower threshold to release (prevents stuck notes)
+          if (delta < _touchOffThreshold) {
+            newState = false;
+          }
+        } else {
+          // Currently not touched - use higher threshold to engage (prevents false triggers)
+          if (delta > _touchOnThreshold) {
+            newState = true;
+          }
+        }
+
+        // Debouncing: require consecutive consistent readings before changing state
+        if (newState != _touchState) {
+          _touchDebounceCount++;
+          if (_touchDebounceCount >= _touchDebounceReads) {
+            _touchState = newState;
+            _touchDebounceCount = 0;
+          }
+        } else {
+          _touchDebounceCount = 0;  // Reset counter when state matches
+        }
+
+        _touchValue = min(1024, max(0, delta) * 10);  // Scale to 0-1024
         setValue(_touchValue);
         return _touchValue;
       #else
@@ -153,7 +192,7 @@ class MultiControl {
 
     void setButtonValue(bool value) { _buttonValue = value; } // 0 or false is off, 1 or true is on
 
-    /* Read the button value 
+    /* Read the button value
     * @return The button value: 0 or false is off, 1 or true is on
     */
     inline
@@ -161,12 +200,29 @@ class MultiControl {
       if (_controlType != _BUTTON) {
         setControl(_BUTTON);
       }
-      int val = digitalRead(_pin);
+      int rawVal = digitalRead(_pin);
+      unsigned long now = millis();
+
+      // Debouncing: track raw state changes
+      if (rawVal != _rawButtonState) {
+        _lastButtonChangeTime = now;
+        _rawButtonState = rawVal;
+      }
+
+      // Only update debounced state if stable for debounce period
+      int val = _debouncedButtonState;
+      if ((now - _lastButtonChangeTime) >= _debounceTime) {
+        if (_rawButtonState != _debouncedButtonState) {
+          _debouncedButtonState = _rawButtonState;
+          val = _debouncedButtonState;
+        }
+      }
+
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
         // Record press time for hold detection
-        _pressStartTime = millis();
+        _pressStartTime = now;
         _holdTriggered = false;
         _held = false;
         _wasHeldOnRelease = false;
@@ -181,7 +237,7 @@ class MultiControl {
         _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
         // Record release time for double-click detection
-        _lastReleaseTime = millis();
+        _lastReleaseTime = now;
         // Save hold and action state before reset (for release checks)
         _wasHeldOnRelease = _holdTriggered;
         _hadHoldAction = _holdActionOccurred;
@@ -191,7 +247,7 @@ class MultiControl {
         _holdActionOccurred = false;
       }
       // Check for hold while pressed
-      if (_buttonValue && !_holdTriggered && (millis() - _pressStartTime >= _holdTime)) {
+      if (_buttonValue && !_holdTriggered && (now - _pressStartTime >= _holdTime)) {
         _held = true;
         _holdTriggered = true;
       }
@@ -253,6 +309,54 @@ class MultiControl {
       return _holdTime;
     }
 
+    /** Set the debounce time for button readings
+     * @param ms Time in milliseconds to debounce (default 20)
+     */
+    void setDebounceTime(unsigned long ms) {
+      _debounceTime = ms;
+    }
+
+    /** Get the current debounce time */
+    unsigned long getDebounceTime() {
+      return _debounceTime;
+    }
+
+    /** Set touch detection thresholds for hysteresis
+     * @param onThreshold Value above baseline to trigger touch ON (default 20)
+     * @param offThreshold Value above baseline to trigger touch OFF (default 8)
+     * The gap between these values prevents oscillation near the threshold.
+     */
+    void setTouchThresholds(int16_t onThreshold, int16_t offThreshold) {
+      _touchOnThreshold = onThreshold;
+      _touchOffThreshold = offThreshold;
+    }
+
+    /** Get touch ON threshold */
+    int16_t getTouchOnThreshold() { return _touchOnThreshold; }
+
+    /** Get touch OFF threshold */
+    int16_t getTouchOffThreshold() { return _touchOffThreshold; }
+
+    /** Set touch debounce read count
+     * @param reads Number of consecutive consistent readings required (default 4)
+     * At 4ms polling interval, 4 reads = ~16ms debounce
+     */
+    void setTouchDebounceReads(uint8_t reads) {
+      _touchDebounceReads = reads;
+    }
+
+    /** Get touch debounce read count */
+    uint8_t getTouchDebounceReads() { return _touchDebounceReads; }
+
+    /** Reset touch baseline to allow recalibration
+     * Call this if touch behavior becomes erratic after environmental changes
+     */
+    void resetTouchBaseline() {
+      _touchBaseline = 65535;
+      _baselineDriftCounter = 0;
+      _touchDebounceCount = 0;
+    }
+
     /** Check if button was held (for use on release - returns state from before reset) */
     bool wasHeld() {
       return _wasHeldOnRelease;
@@ -291,12 +395,36 @@ class MultiControl {
       }
       muxWrite();
       delayMicroseconds(10); // Allow MUX to settle
-      int val = digitalRead(_pin);
+      int rawVal = digitalRead(_pin);
+      unsigned long now = millis();
+
+      // Debouncing: track raw state changes
+      if (rawVal != _rawButtonState) {
+        _lastButtonChangeTime = now;
+        _rawButtonState = rawVal;
+      }
+
+      // Only update debounced state if stable for debounce period
+      int val = _debouncedButtonState;
+      if ((now - _lastButtonChangeTime) >= _debounceTime) {
+        if (_rawButtonState != _debouncedButtonState) {
+          _debouncedButtonState = _rawButtonState;
+          val = _debouncedButtonState;
+        }
+      }
+
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        // Record press time for hold detection
+        _pressStartTime = now;
+        _holdTriggered = false;
+        _held = false;
+        _wasHeldOnRelease = false;
+        _holdActionOccurred = false;
+        _hadHoldAction = false;
         // Check for double-click on press
-        if (millis() - _lastReleaseTime < _doubleClickTime) {
+        if (_pressStartTime - _lastReleaseTime < _doubleClickTime) {
           _doubleClicked = true;
         }
       }
@@ -304,7 +432,19 @@ class MultiControl {
         _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
         // Record release time for double-click detection
-        _lastReleaseTime = millis();
+        _lastReleaseTime = now;
+        // Save hold and action state before reset (for release checks)
+        _wasHeldOnRelease = _holdTriggered;
+        _hadHoldAction = _holdActionOccurred;
+        // Reset hold state on release
+        _holdTriggered = false;
+        _held = false;
+        _holdActionOccurred = false;
+      }
+      // Check for hold while pressed
+      if (_buttonValue && !_holdTriggered && (now - _pressStartTime >= _holdTime)) {
+        _held = true;
+        _holdTriggered = true;
       }
       setValue(val);
       return val;
@@ -572,6 +712,11 @@ class MultiControl {
     bool _wasHeldOnRelease = false;  // preserved hold state for release detection
     bool _holdActionOccurred = false;  // external action during hold
     bool _hadHoldAction = false;  // preserved action state for release detection
+    // Button debouncing
+    unsigned long _debounceTime = 20;  // ms debounce window
+    unsigned long _lastButtonChangeTime = 0;  // when raw state last changed
+    int8_t _rawButtonState = 1;  // raw (undebounced) button reading
+    int8_t _debouncedButtonState = 1;  // stable debounced state (1 = released)
     int _minTouchValue = 1024; 
     int _maxTouchValue = 0; 
     int _prevTouchValue = 0;
@@ -611,6 +756,12 @@ class MultiControl {
     uint8_t _muxControlPins[3] = {0};  // Static allocation (was dynamic new uint8_t[])
     uint8_t _muxChannel = 0;
     uint16_t _touchBaseline = 65535;  // Start high, will be reduced by actual readings
+    // Touch hysteresis and debouncing
+    int16_t _touchOnThreshold = 20;    // Higher threshold to turn ON (prevents false triggers)
+    int16_t _touchOffThreshold = 8;    // Lower threshold to turn OFF (prevents premature release)
+    uint8_t _touchDebounceCount = 0;   // Counter for consecutive consistent readings
+    uint8_t _touchDebounceReads = 4;   // Required consecutive reads (4 reads × 4ms = ~16ms debounce)
+    uint16_t _baselineDriftCounter = 0;      // Counter for slow baseline adaptation
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
