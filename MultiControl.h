@@ -509,6 +509,10 @@ class MultiControl {
         retVal = _potValue;
       }
 
+      // slew reading to smooth out rapid changes and increase reported resolution
+      float slewVal = slew((float)_potValue, (float)retVal, 0.5f);
+      retVal = (int)(slewVal + 0.5f); 
+
       if (readValue == 0) {
         retVal = min(checkBank(readValue), retVal);
       } else retVal = checkBank(retVal);
@@ -844,7 +848,6 @@ class MultiControl {
         return (int)smoothValue;
       }
       float snap = snapCurve(diff * snapMultiplier);
-      // Note: removed dead code (snap *= 0.5 + 0.5) which always equals 1.0
       smoothValue += (newValue - smoothValue) * snap;
       if(smoothValue < 0.0) {
         smoothValue = 0.0;
