@@ -129,10 +129,17 @@ class MultiControl {
         }
         _touchValue = touchRead(_pin) >> 8;
 
-        // Update baseline - only drift down immediately
-        if (_touchValue < _touchBaseline) {
+        // Update baseline - but ignore small drops that could be capacitive coupling
+        // from other touched pads. Only sync if significantly lower (initial calibration)
+        // or if baseline is uninitialized.
+        if (_touchBaseline == 65535) {
+          // First read after reset - sync immediately
+          _touchBaseline = _touchValue;
+        } else if (_touchValue < _touchBaseline - 5) {
+          // Significant drop (> 5 units) - likely real environmental change, sync
           _touchBaseline = _touchValue;
         }
+        // Small drops (1-5 units) are ignored - likely capacitive coupling from other touches
 
         // Adaptive baseline: slowly drift up when not touched to handle environmental changes
         if (!_touchState) {
@@ -354,6 +361,22 @@ class MultiControl {
     void resetTouchBaseline() {
       _touchBaseline = 65535;
       _baselineDriftCounter = 0;
+      _touchDebounceCount = 0;
+    }
+
+    /** Calibrate touch baseline at startup
+     * Call this in setup() after setControl(0) to prevent false triggers.
+     * Performs multiple readings over ~200ms to stabilize the baseline.
+     * @param readings Number of calibration readings (default 50, ~200ms at 4ms intervals)
+     */
+    void calibrateTouch(int readings = 50) {
+      resetTouchBaseline();
+      for (int i = 0; i < readings; i++) {
+        readTouch();  // Each read updates the baseline
+        delay(4);
+      }
+      // Clear any false touch state from calibration period
+      _touchState = false;
       _touchDebounceCount = 0;
     }
 
@@ -761,8 +784,8 @@ class MultiControl {
     uint8_t _muxChannel = 0;
     uint16_t _touchBaseline = 65535;  // Start high, will be reduced by actual readings
     // Touch hysteresis and debouncing
-    int16_t _touchOnThreshold = 20;    // Higher threshold to turn ON (prevents false triggers)
-    int16_t _touchOffThreshold = 8;    // Lower threshold to turn OFF (prevents premature release)
+    int16_t _touchOnThreshold = 22;    // Higher threshold to turn ON (prevents false triggers)
+    int16_t _touchOffThreshold = 16;   // Threshold to turn OFF - raised from 8 to handle capacitive coupling when multiple pads touched
     uint8_t _touchDebounceCount = 0;   // Counter for consecutive consistent readings
     uint8_t _touchDebounceReads = 4;   // Required consecutive reads (4 reads × 4ms = ~16ms debounce)
     uint16_t _baselineDriftCounter = 0;      // Counter for slow baseline adaptation
