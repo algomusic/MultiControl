@@ -26,7 +26,15 @@ class MultiControl {
   public:
     /** Constructor. */
     MultiControl() {
-      initBanks(_numBanks);
+      initBanks(1);  // Start with 1 bank to save memory
+    };
+
+    /** Destructor - free dynamic memory */
+    ~MultiControl() {
+      if (_bankValues != nullptr) {
+        delete[] _bankValues;
+        _bankValues = nullptr;
+      }
     };
 
     /** Constructor. 
@@ -36,7 +44,7 @@ class MultiControl {
       MultiControl(pin, 0);
     };
 
-    /** Constructor. 
+    /** Constructor.
     * @param pin The GPIO pin number to use for the control.
     * @param controlType The type of control: 0 = touch, 1 = potentiometer, 2 = button, 3 = switch, 4 = muxButton
     * Note that muxButton requires also setting the muxControlPins and muxChannel
@@ -45,7 +53,7 @@ class MultiControl {
       setPin(pin);
       setControl(controlType);
       // analogSetPinAttenuation(pin, ADC_11db); // ESP32
-      initBanks(_numBanks);
+      initBanks(1);  // Start with 1 bank to save memory
     };
 
     /* Set the GPIO pin to use
@@ -107,10 +115,15 @@ class MultiControl {
     /* Set the type of control.
     * @param controlType The type of control: 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton
     */
-    void setControl(uint8_t controlType) { 
-      _controlType = controlType; 
+    void setControl(uint8_t controlType) {
+      _controlType = controlType;
       if (controlType == _SWITCH || controlType == _BUTTON || controlType == _MUX_BUTTON) {
         pinMode(_pin, INPUT_PULLUP); // for buttons and switches
+        // Initialize button debounce state to prevent false triggers on startup
+        _lastButtonChangeTime = millis();
+        _rawButtonState = digitalRead(_pin);
+        _debouncedButtonState = _rawButtonState;
+        _buttonValue = (_rawButtonState == 0);  // true if pressed
       } else if (controlType == _POT || controlType == _TOUCH) {
         pinMode(_pin, INPUT); // for touch or potentiometer
         digitalWrite(_pin, LOW); // disable internal pullup if set
@@ -344,6 +357,17 @@ class MultiControl {
     /** Get touch OFF threshold */
     int16_t getTouchOffThreshold() { return _touchOffThreshold; }
 
+    /** Set pot hysteresis (minimum change required to report new value)
+     * Higher values reduce jitter but decrease sensitivity
+     * @param hysteresis Threshold value (default 3, try 8-15 for less jitter)
+     */
+    void setPotHysteresis(int hysteresis) {
+      _potHysteresis = max(1, hysteresis);
+    }
+
+    /** Get pot hysteresis threshold */
+    int getPotHysteresis() { return _potHysteresis; }
+
     /** Set touch debounce read count
      * @param reads Number of consecutive consistent readings required (default 4)
      * At 4ms polling interval, 4 reads = ~16ms debounce
@@ -528,7 +552,7 @@ class MultiControl {
       int retVal = responsiveValue * 2;
 
       // Output hysteresis - suppress small fluctuations except near edges
-      if (abs(retVal - _potValue) < 3 && retVal > 2 && retVal < 1020) {
+      if (abs(retVal - _potValue) < _potHysteresis && retVal > 2 && retVal < 1020) {
         retVal = _potValue;
       }
 
@@ -629,20 +653,49 @@ class MultiControl {
     }
 
     // banks
-    /* Setup the number of banks (max 8).
-    *  Resets all bank values to 0.
+    /* Ensure bank array has capacity for the required number of banks.
+    *  Dynamically grows the array if needed, preserving existing values.
+    */
+    void ensureBankCapacity(int requiredBanks) {
+      if (requiredBanks <= _numBanks) return;
+
+      // Allocate new array
+      int* newValues = new int[requiredBanks];
+
+      // Copy existing values
+      for (int i = 0; i < _numBanks; i++) {
+        newValues[i] = _bankValues[i];
+      }
+      // Initialize new slots to 0
+      for (int i = _numBanks; i < requiredBanks; i++) {
+        newValues[i] = 0;
+      }
+
+      // Free old array and use new one
+      if (_bankValues != nullptr) {
+        delete[] _bankValues;
+      }
+      _bankValues = newValues;
+      _numBanks = requiredBanks;
+    }
+
+    /* Setup the number of banks.
+    *  Grows array if needed, resets all bank values to 0.
     */
     void initBanks(int numBanks) {
-      _numBanks = (numBanks > 8) ? 8 : numBanks;
-      for (int i = 0; i < 8; i++) {
+      ensureBankCapacity(numBanks);
+      for (int i = 0; i < _numBanks; i++) {
         _bankValues[i] = 0;
       }
       _bank = 0;
     }
 
-    /* Choose the current bank */
+    /* Choose the current bank - grows array if needed */
     void setBank(uint8_t bank) {
-      _bank = bank % _numBanks;
+      if (bank >= _numBanks) {
+        ensureBankCapacity(bank + 1);
+      }
+      _bank = bank;
       _bankChanged = true;
       _latchAbove = false;
       _latchBelow = false;
@@ -652,28 +705,32 @@ class MultiControl {
     }
 
     /* Get the current bank */
-    int getBank() { 
-      return _bank; 
+    int getBank() {
+      return _bank;
     }
 
     /* Set the current bank's value */
-    void setCurrentBankValue(int val) { 
+    void setCurrentBankValue(int val) {
       setBankValue(_bank, val);
     }
 
-    /* Set a particular bank's value */
-    void setBankValue(int bank, int val) { 
+    /* Set a particular bank's value - grows array if needed */
+    void setBankValue(int bank, int val) {
+      if (bank >= _numBanks) {
+        ensureBankCapacity(bank + 1);
+      }
       _bankValues[bank] = val;
     }
 
     /* Get the current bank's value */
-    int getCurrentBankValue() { 
-      return getValue(); 
+    int getCurrentBankValue() {
+      return getValue();
     }
 
-    /* Geta particular bank's value */
-    int getBankValue(int bank) { 
-      return _bankValues[bank]; 
+    /* Get a particular bank's value (returns 0 if bank not yet allocated) */
+    int getBankValue(int bank) {
+      if (bank >= _numBanks) return 0;
+      return _bankValues[bank];
     }
 
     /* Set the changed status of a bank */
@@ -749,14 +806,15 @@ class MultiControl {
     int _prevTouchValue = 0;
     uint8_t _controlType = 0; // 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton
     int _potValue = 0; // 0 - 1023
+    int _potHysteresis = 3; // Minimum change required to report new value (default 3, increase for less jitter)
     int8_t _switchValue = 0; // 0 - 1
     const static uint8_t _TOUCH = 0;
     const static uint8_t _POT = 1;
     const static uint8_t _BUTTON = 2;
     const static uint8_t _SWITCH = 3;
     const static uint8_t _MUX_BUTTON = 4;
-    int _numBanks = 8;
-    int _bankValues[8] = {0};  // Static allocation (was dynamic new int[])
+    int _numBanks = 0;
+    int* _bankValues = nullptr;  // Dynamic allocation - grows as needed
     uint8_t _bank = 0;
     bool _bankChanged = true;
     bool _latchEnabled = true;  // Enable/disable latching on bank change
