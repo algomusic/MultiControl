@@ -27,14 +27,15 @@ void setup() {
   }
   pixels.setBrightness(100); // 0 - 255
   updateLED(255, 0, 0); // set up S3 LED
-  Serial.println("ESP32 MiltiControl Test");
+  Serial.println("ESP32 MultiControl Bank Test");
 }
 
 void loop() {
   if (controlPads[b-1].isPressed()) { // change bank on button press
     int currBank = controlPads[0].getBank();
-    for (int i=0; i<15; i++) { 
-      controlPads[0].setBank((currBank + 1) % numbOfBanks);
+    int newBank = (currBank + 1) % numbOfBanks;
+    for (int i=0; i<15; i++) {
+      controlPads[i].setBank(newBank);
     }
   }
   Serial.print(" bank: " + String(controlPads[0].getBank()));
@@ -46,10 +47,28 @@ void loop() {
   if (controlPads[b-1].getValue() == 0 || controlPads[t-1].getValue() > 0) { // button/touch changes LED color
     updateLED(0, 255, 0);
   } else updateLED(255, 0, 0);
-  Serial.print(" pot 0: ");Serial.print(controlPads[0].readPot());
-  Serial.print(" pot 1: ");Serial.print(controlPads[1].readPot());
-  Serial.print(" pot 2: ");Serial.print(controlPads[2].readPot());
-  Serial.print(" pot 3: ");Serial.print(controlPads[3].readPot());
+  // Read pots and show latch status
+  // Return codes: 0-1023 = value, -1 = below target (stationary), -2 = above target (stationary)
+  //               -3 = floating pin, -4 = below target (moving), -5 = above target (moving)
+  for (int i = 0; i < 4; i++) {
+    int val = controlPads[i].readPot();
+    Serial.print(" pot");
+    Serial.print(i);
+    Serial.print(": ");
+    if (val >= 0) {
+      Serial.print(val);
+    } else if (val == -1) {
+      Serial.print("v");  // below target, stationary
+    } else if (val == -2) {
+      Serial.print("^");  // above target, stationary
+    } else if (val == -4) {
+      Serial.print("V");  // below target, moving
+    } else if (val == -5) {
+      Serial.print("A");  // above target, moving
+    } else {
+      Serial.print(val);
+    }
+  }
   Serial.println();
   delay(250);
 }

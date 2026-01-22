@@ -1,5 +1,5 @@
 // MultiControl multiplexed buttons test
-#import "MultiControl.h"
+#include "MultiControl.h"
 MultiControl controlPads[24];
 int lastReading[24];
 int inputPins[] = {15, 16, 17};
@@ -19,21 +19,50 @@ void setup() {
     // Serial.println("ctrl pin 3 " + String(controlPads[i].getMuxControlPin(2)));
     
   }
-  Serial.println("MiltiControl multipled buttons Test");
+  Serial.println("MultiControl Multiplexed Buttons Test");
   
 }
 
 void loop() {
-  for (int i=0; i<24; i++) {    
+  for (int i=0; i<24; i++) {
     int reading = controlPads[i].readMuxButton();
+
+    // Report button state changes
     if (reading != lastReading[i]) {
       lastReading[i] = reading;
-      Serial.print(" control: ");Serial.print(controlPads[i].getControl());
-      Serial.print(" chan: ");Serial.print(controlPads[i].getMuxChannel());
-      Serial.print(" button: ");Serial.print(reading);
-      Serial.println();
+      Serial.print("Chan ");
+      Serial.print(controlPads[i].getMuxChannel());
+      Serial.print(": ");
+      Serial.println(reading == 0 ? "PRESSED" : "RELEASED");
     }
-  } 
-  
-  delay(50);
+
+    // Check for double-click
+    if (controlPads[i].isDoubleClicked()) {
+      Serial.print("Chan ");
+      Serial.print(controlPads[i].getMuxChannel());
+      Serial.println(": DOUBLE-CLICK");
+    }
+
+    // Check for hold
+    if (controlPads[i].isHeld()) {
+      Serial.print("Chan ");
+      Serial.print(controlPads[i].getMuxChannel());
+      Serial.println(": HOLD");
+    }
+
+    // Check for long-press start
+    if (controlPads[i].isLongPressed() && reading == 0) {
+      // Only print once when long-press starts (reading==0 means still pressed)
+      static bool longPressReported[24] = {false};
+      if (!longPressReported[i]) {
+        Serial.print("Chan ");
+        Serial.print(controlPads[i].getMuxChannel());
+        Serial.println(": LONG-PRESS");
+        longPressReported[i] = true;
+      }
+      if (reading == 1) longPressReported[i] = false;
+    }
+  }
+
+  delay(10);
 }

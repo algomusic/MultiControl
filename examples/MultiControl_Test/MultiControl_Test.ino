@@ -26,7 +26,7 @@ void setup() {
   }
   pixels.setBrightness(100); // 0 - 255
   updateLED(255, 0, 0); // set up S3 LED
-  Serial.println("ESP32 MiltiControl Test");
+  Serial.println("ESP32 MultiControl Test");
 }
 
 void loop() {

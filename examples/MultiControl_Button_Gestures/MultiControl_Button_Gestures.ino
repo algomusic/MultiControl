@@ -14,8 +14,8 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("=== Button Gestures Demo ===");
-  Serial.println("Single-click: OPTIMISTIC (instant) + CONSERVATIVE (400ms delay)");
-  Serial.println("Double-click: Two presses within 400ms");
+  Serial.println("Single-click: OPTIMISTIC (instant) + CONSERVATIVE (350ms delay)");
+  Serial.println("Double-click: Two presses within 350ms");
   Serial.println("Hold: 500ms (one-shot)  |  Long-press: 1000ms (continuous)");
   Serial.println();
 }
