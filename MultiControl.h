@@ -57,12 +57,15 @@ class MultiControl {
     };
 
     /* Set the GPIO pin to use
-    * @param pin1 The GPIO pin number to use for the control.
+    * @param pin The GPIO pin number to use for the control.
     */
-    void setPin(uint8_t pin) { 
-      _pin = pin; 
-      if (_controlType == _MUX_BUTTON) pinMode(_pin, INPUT_PULLUP);
-      // analogSetPinAttenuation(_pin, ADC_11db); // ESP32
+    void setPin(uint8_t pin) {
+      _pin = pin;
+      if (_controlType == _MUX_BUTTON) {
+        pinMode(_pin, INPUT_PULLUP);
+      } else {
+        pinMode(_pin, INPUT);  // Default to INPUT for pots/touch/other
+      }
     }
 
     /* Return the GPIO pin in use */
@@ -368,6 +371,44 @@ class MultiControl {
     /** Get pot hysteresis threshold */
     int getPotHysteresis() { return _potHysteresis; }
 
+    /** Set pot activity threshold for sleep mode
+     * When the error moving average falls below this threshold, the pot "sleeps"
+     * and stops updating, which reduces jitter when stationary.
+     * Higher values = more aggressive sleep (less jitter but may miss small movements)
+     * @param threshold Activity threshold (default 4.0, try 6.0-10.0 for less jitter)
+     */
+    void setActivityThreshold(float threshold) {
+      activityThreshold = max(0.0f, threshold);
+    }
+
+    /** Get pot activity threshold */
+    float getActivityThreshold() { return activityThreshold; }
+
+    /** Set pot snap multiplier for smoothing
+     * Controls how quickly the smoothed value snaps to the raw value.
+     * Lower values = more smoothing (less jitter but slower response)
+     * @param multiplier Snap multiplier (default 0.05, try 0.02-0.04 for smoother)
+     */
+    void setSnapMultiplier(float multiplier) {
+      if (multiplier > 1.0f) multiplier = 1.0f;
+      if (multiplier < 0.0f) multiplier = 0.0f;
+      snapMultiplier = multiplier;
+    }
+
+    /** Get pot snap multiplier */
+    float getSnapMultiplier() { return snapMultiplier; }
+
+    /** Enable or disable pot sleep mode
+     * When enabled, pots stop updating when activity falls below threshold.
+     * @param enabled true to enable sleep mode (default), false to disable
+     */
+    void setSleepEnable(bool enabled) {
+      sleepEnable = enabled;
+    }
+
+    /** Check if pot sleep mode is enabled */
+    bool isSleepEnabled() { return sleepEnable; }
+
     /** Set touch debounce read count
      * @param reads Number of consecutive consistent readings required (default 4)
      * At 4ms polling interval, 4 reads = ~16ms debounce
@@ -512,16 +553,10 @@ class MultiControl {
         samples[s] = analogRead(_pin);
         if (s < 3) delayMicroseconds(10);
       }
-      // Simple sort for median of middle two (rejects outliers)
-      for (int i = 0; i < 3; i++) {
-        for (int j = i + 1; j < 4; j++) {
-          if (samples[j] < samples[i]) {
-            int tmp = samples[i];
-            samples[i] = samples[j];
-            samples[j] = tmp;
-          }
-        }
-      }
+      // Optimal 4-element sort using comparison network (5 swaps vs 6 for bubble)
+      #define SORT_SWAP(a,b) if(samples[a]>samples[b]){int t=samples[a];samples[a]=samples[b];samples[b]=t;}
+      SORT_SWAP(0,1); SORT_SWAP(2,3); SORT_SWAP(0,2); SORT_SWAP(1,3); SORT_SWAP(1,2);
+      #undef SORT_SWAP
 
       // Detect floating/disconnected pin - samples too erratic
       int sampleSpread = samples[3] - samples[0];  // max - min (sorted)
@@ -551,6 +586,12 @@ class MultiControl {
       responsiveUpdate(readValue >> 4);
       int retVal = responsiveValue * 2;
 
+      // Capture actual pot position for bank/latch tracking (before slew distorts it)
+      // Snap edges to ensure consistent values despite ADC noise at extremes
+      int bankVal = retVal;
+      if (retVal < 20) bankVal = 0;
+      else if (retVal > 1003) bankVal = 1022;
+
       // Output hysteresis - suppress small fluctuations except near edges
       if (abs(retVal - _potValue) < _potHysteresis && retVal > 2 && retVal < 1020) {
         retVal = _potValue;
@@ -558,13 +599,27 @@ class MultiControl {
 
       // slew reading to smooth out rapid changes and increase reported resolution
       float slewVal = slew((float)_potValue, (float)retVal, 0.5f);
-      retVal = (int)(slewVal + 0.5f); 
+      retVal = (int)(slewVal + 0.5f);
 
       if (readValue == 0) {
-        retVal = min(checkBank(readValue), retVal);
-      } else retVal = checkBank(retVal);
+        retVal = min(checkBank(bankVal), retVal);
+      } else retVal = checkBank(bankVal);
       if (retVal >= 0) setValue(retVal);
       return retVal;
+    }
+
+    /* Read the potentiometer value only if it has changed
+     * Combines readPot() with change detection for cleaner code
+     * @return The potentiometer value (0-1023) if changed, -1 if unchanged,
+     *         or negative error codes from readPot() (-2 latched, -3 unstable)
+     */
+    inline
+    int readPotChanged() {
+      int prevVal = _potValue;
+      int newVal = readPot();
+      if (newVal < 0) return newVal;  // Pass through error codes (-1, -2, -3)
+      if (newVal == prevVal) return -1;  // No change
+      return newVal;
     }
 
     /* Read the switch value */
@@ -699,6 +754,7 @@ class MultiControl {
       _bankChanged = true;
       _latchAbove = false;
       _latchBelow = false;
+      _prevLatchedValue = -1;  // reset movement tracking
       // Sync _potValue with new bank's value to ensure hysteresis works correctly
       _potValue = _bankValues[_bank];
       // Serial.println("Bank changed. Current bank: " + String(_bank) + " Value: " + String(getValue()));
@@ -768,6 +824,7 @@ class MultiControl {
       _latchBelow = true;
       _firstLatchValue = -1;
       _firstLatchChanged = false;
+      _prevLatchedValue = -1;
     }
 
     /** Check if currently latched (waiting for pot to cross threshold).
@@ -822,6 +879,7 @@ class MultiControl {
     bool _latchAbove = false;
     int _firstLatchValue = -1;
     bool _firstLatchChanged = false;
+    int _prevLatchedValue = -1;  // Track previous value while latched for movement detection
     // responsive read variables
     int analogResolution = 512; // 0-511 input range from readPot() >>4 shift
     float snapMultiplier = 0.05; // 0.01
@@ -861,13 +919,17 @@ class MultiControl {
 
     /* Check if the bank has changed and if so, set the pot and switch to latch
     * so as not to update until the value passes the previous value of that bank.
-    * Return -1 or -2 when the bank has changed and the value should not be updated.
-    * -1 means the value is below the bank value, -2 means the value is above the bank value.
+    * Return negative values when the bank has changed and the value should not be updated:
+    * -1 = below target, stationary
+    * -2 = above target, stationary
+    * -4 = below target, moved since last read
+    * -5 = above target, moved since last read
     */
     int checkBank(int val) {
       // Skip latching logic if disabled
       if (!_latchEnabled) {
         _bankChanged = false;
+        _prevLatchedValue = -1;
         return min(1023, val);
       }
 
@@ -890,11 +952,19 @@ class MultiControl {
           _bankChanged = false;
           _firstLatchValue = -1; // reset
           _firstLatchChanged = false;
+          _prevLatchedValue = -1; // reset movement tracking
         } else { // don't return anything until the bank has changed
+          // Use hysteresis for movement detection to ignore jitter near edges (0 and 1023)
+          bool moved = (_prevLatchedValue != -1) && (abs(val - _prevLatchedValue) > _potHysteresis);
+          _prevLatchedValue = val;
           if (val < getCurrentBankValue()) {
-            val = -1; // below val
-          } else val = -2; // above val
+            val = moved ? -4 : -1; // below target, moved or stationary
+          } else {
+            val = moved ? -5 : -2; // above target, moved or stationary
+          }
         }
+      } else {
+        _prevLatchedValue = -1; // reset when not latched
       }
       return min(1023, val);
     }
@@ -945,16 +1015,6 @@ class MultiControl {
         return 1.0;
       }
       return y;
-    }
-
-    void setSnapMultiplier(float newMultiplier) {
-      if(newMultiplier > 1.0) {
-        newMultiplier = 1.0;
-      }
-      if(newMultiplier < 0.0) {
-        newMultiplier = 0.0;
-      }
-      snapMultiplier = newMultiplier;
     }
 
     /** Set max allowed sample spread for floating pin detection
