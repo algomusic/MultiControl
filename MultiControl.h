@@ -244,6 +244,18 @@ class MultiControl {
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        _singleClicked = false;  // clear any unread single-click from previous press
+        _wasDoubleClicked = false;  // clear persistent flag on new press
+        // Check for double-click using press-to-press timing (more forgiving)
+        if (_prevPressTime > 0 && (now - _prevPressTime) < _doubleClickTime) {
+          _doubleClicked = true;
+          _wasDoubleClicked = true;  // set persistent flag
+          _clickPending = false;
+          _prevPressTime = 0;  // reset to prevent triple-click triggering another double
+        } else {
+          _clickPending = true;
+          _prevPressTime = now;
+        }
         // Record press time for hold detection
         _pressStartTime = now;
         _holdTriggered = false;
@@ -251,28 +263,35 @@ class MultiControl {
         _wasHeldOnRelease = false;
         _holdActionOccurred = false;
         _hadHoldAction = false;
-        // Check for double-click on press
-        if (_pressStartTime - _lastReleaseTime < _doubleClickTime) {
-          _doubleClicked = true;
-        }
       }
       if (val == 1 && _buttonValue == true) {
         _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
-        // Record release time for double-click detection
+        // Record release time
         _lastReleaseTime = now;
         // Save hold and action state before reset (for release checks)
         _wasHeldOnRelease = _holdTriggered;
         _hadHoldAction = _holdActionOccurred;
-        // Reset hold state on release
+        // Reset hold and long-press state on release
         _holdTriggered = false;
         _held = false;
         _holdActionOccurred = false;
+        _longPressed = false;
       }
       // Check for hold while pressed
       if (_buttonValue && !_holdTriggered && (now - _pressStartTime >= _holdTime)) {
         _held = true;
         _holdTriggered = true;
+      }
+      // Check for long-press (continuous state while held past threshold)
+      if (_buttonValue && (now - _pressStartTime >= _longPressTime)) {
+        _longPressed = true;
+      }
+      // Check for confirmed single-click (pending + released + window expired)
+      if (_clickPending && !_buttonValue && (now - _prevPressTime) >= _doubleClickTime) {
+        _singleClicked = true;
+        _clickPending = false;
+        _prevPressTime = 0;
       }
       setValue(val);
       return val;
@@ -288,7 +307,7 @@ class MultiControl {
     }
 
     /** Check if the button was double-clicked
-     * Call this after isPressed() in your button handling code.
+     * Uses press-to-press timing for reliable detection.
      * Returns true only once per double-click event (on the second press).
      * @return true if double-click detected, false otherwise
      */
@@ -298,8 +317,38 @@ class MultiControl {
       return result;
     }
 
+    /** Check if a double-click occurred (persistent until next button press)
+     * Unlike isDoubleClicked() which clears immediately when read,
+     * this flag persists until the next button press event.
+     * Use this when you need to check double-click status multiple times
+     * or when timing makes isDoubleClicked() unreliable.
+     * @return true if double-click detected since last press, false otherwise
+     */
+    bool wasDoubleClicked() {
+      return _wasDoubleClicked;
+    }
+
+    /** Check if a single click was confirmed (double-click window expired)
+     * Use this to defer single-click actions until you're sure it's not a double-click.
+     * Returns true only once per confirmed single click (after release + window expiry).
+     * Call readButton() or isPressed() regularly for this to update.
+     * @return true if confirmed single click, false otherwise
+     */
+    bool wasSingleClicked() {
+      bool result = _singleClicked;
+      _singleClicked = false;  // Clear after reading
+      return result;
+    }
+
+    /** Check if a click is pending (waiting to confirm single vs double)
+     * @return true if waiting for double-click window to expire
+     */
+    bool isClickPending() {
+      return _clickPending;
+    }
+
     /** Set the double-click detection time window
-     * @param ms Time window in milliseconds (default 300)
+     * @param ms Time window in milliseconds (default 350)
      */
     void setDoubleClickTime(unsigned long ms) {
       _doubleClickTime = ms;
@@ -330,6 +379,27 @@ class MultiControl {
     /** Get the current hold time threshold */
     unsigned long getHoldTime() {
       return _holdTime;
+    }
+
+    /** Check if button is being long-pressed (held past long-press threshold)
+     * Unlike isHeld(), this returns true continuously while held.
+     * Clears automatically on button release.
+     * @return true if long-pressed, false otherwise
+     */
+    bool isLongPressed() {
+      return _longPressed;
+    }
+
+    /** Set the long-press detection time threshold
+     * @param ms Time in milliseconds to trigger long-press (default 1000)
+     */
+    void setLongPressTime(unsigned long ms) {
+      _longPressTime = ms;
+    }
+
+    /** Get the current long-press time threshold */
+    unsigned long getLongPressTime() {
+      return _longPressTime;
     }
 
     /** Set the debounce time for button readings
@@ -504,6 +574,18 @@ class MultiControl {
       if (val == 0 && _buttonValue == false) {
         _buttonValue = true;
         multiControlAnyButtonPressed += 1;
+        _singleClicked = false;  // clear any unread single-click from previous press
+        _wasDoubleClicked = false;  // clear persistent flag on new press
+        // Check for double-click using press-to-press timing (more forgiving)
+        if (_prevPressTime > 0 && (now - _prevPressTime) < _doubleClickTime) {
+          _doubleClicked = true;
+          _wasDoubleClicked = true;  // set persistent flag
+          _clickPending = false;
+          _prevPressTime = 0;  // reset to prevent triple-click triggering another double
+        } else {
+          _clickPending = true;
+          _prevPressTime = now;
+        }
         // Record press time for hold detection
         _pressStartTime = now;
         _holdTriggered = false;
@@ -511,28 +593,35 @@ class MultiControl {
         _wasHeldOnRelease = false;
         _holdActionOccurred = false;
         _hadHoldAction = false;
-        // Check for double-click on press
-        if (_pressStartTime - _lastReleaseTime < _doubleClickTime) {
-          _doubleClicked = true;
-        }
       }
       if (val == 1 && _buttonValue == true) {
         _buttonValue = false;
         multiControlAnyButtonPressed -= 1;
-        // Record release time for double-click detection
+        // Record release time
         _lastReleaseTime = now;
         // Save hold and action state before reset (for release checks)
         _wasHeldOnRelease = _holdTriggered;
         _hadHoldAction = _holdActionOccurred;
-        // Reset hold state on release
+        // Reset hold and long-press state on release
         _holdTriggered = false;
         _held = false;
         _holdActionOccurred = false;
+        _longPressed = false;
       }
       // Check for hold while pressed
       if (_buttonValue && !_holdTriggered && (now - _pressStartTime >= _holdTime)) {
         _held = true;
         _holdTriggered = true;
+      }
+      // Check for long-press (continuous state while held past threshold)
+      if (_buttonValue && (now - _pressStartTime >= _longPressTime)) {
+        _longPressed = true;
+      }
+      // Check for confirmed single-click (pending + released + window expired)
+      if (_clickPending && !_buttonValue && (now - _prevPressTime) >= _doubleClickTime) {
+        _singleClicked = true;
+        _clickPending = false;
+        _prevPressTime = 0;
       }
       setValue(val);
       return val;
@@ -841,10 +930,14 @@ class MultiControl {
     int8_t _touchState = false; // 0 or 1, true is touched
     int8_t _buttonValue = 0; // 0 or 1, true (1) is pressed
     int8_t _prevButtonValue = 0;
-    // Double-click detection
+    // Double-click detection (uses press-to-press timing for reliability)
+    unsigned long _prevPressTime = 0;  // timestamp of previous button press
     unsigned long _lastReleaseTime = 0;  // timestamp of last button release
-    unsigned long _doubleClickTime = 300;  // ms window for double-click detection
-    bool _doubleClicked = false;  // flag set when double-click detected
+    unsigned long _doubleClickTime = 350;  // ms window for double-click detection
+    bool _doubleClicked = false;  // flag set when double-click detected (cleared on isDoubleClicked())
+    bool _wasDoubleClicked = false;  // persistent flag (cleared on next button read, not on check)
+    bool _singleClicked = false;  // flag set when single-click confirmed
+    bool _clickPending = false;  // true if waiting to confirm single vs double click
     // Hold detection
     unsigned long _pressStartTime = 0;  // timestamp when button was pressed
     unsigned long _holdTime = 500;  // ms to trigger hold
@@ -853,6 +946,9 @@ class MultiControl {
     bool _wasHeldOnRelease = false;  // preserved hold state for release detection
     bool _holdActionOccurred = false;  // external action during hold
     bool _hadHoldAction = false;  // preserved action state for release detection
+    // Long-press detection (continuous state while held past threshold)
+    unsigned long _longPressTime = 1000;  // ms to trigger long-press
+    bool _longPressed = false;  // true while button held past long-press threshold
     // Button debouncing
     unsigned long _debounceTime = 20;  // ms debounce window
     unsigned long _lastButtonChangeTime = 0;  // when raw state last changed
