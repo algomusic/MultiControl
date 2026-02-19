@@ -246,6 +246,8 @@ class MultiControl {
         multiControlAnyButtonPressed += 1;
         _singleClicked = false;  // clear any unread single-click from previous press
         _wasDoubleClicked = false;  // clear persistent flag on new press
+        _wasLongPressedOnRelease = false;  // clear previous long-press latch
+        _lastPressDuration = 0;
         // Check for double-click using press-to-press timing (more forgiving)
         if (_prevPressTime > 0 && (now - _prevPressTime) < _doubleClickTime) {
           _doubleClicked = true;
@@ -272,6 +274,9 @@ class MultiControl {
         // Save hold and action state before reset (for release checks)
         _wasHeldOnRelease = _holdTriggered;
         _hadHoldAction = _holdActionOccurred;
+        // Calculate press duration from debounced timestamps
+        _lastPressDuration = now - _pressStartTime;
+        _wasLongPressedOnRelease = _lastPressDuration >= _longPressTime;
         // Reset hold and long-press state on release
         _holdTriggered = false;
         _held = false;
@@ -388,6 +393,22 @@ class MultiControl {
      */
     bool isLongPressed() {
       return _longPressed;
+    }
+
+    /** Check if button was long-pressed (for use on release)
+     * Returns the long-press state captured at the moment of release.
+     * Cleared after reading.
+     * @return true if long-press was detected on last release, false otherwise
+     */
+    bool wasLongPressed() {
+      bool result = _wasLongPressedOnRelease;
+      _wasLongPressedOnRelease = false;
+      return result;
+    }
+
+    /** Get duration of the last button press (ms), measured on release */
+    unsigned long getLastPressDuration() {
+      return _lastPressDuration;
     }
 
     /** Set the long-press detection time threshold
@@ -576,6 +597,8 @@ class MultiControl {
         multiControlAnyButtonPressed += 1;
         _singleClicked = false;  // clear any unread single-click from previous press
         _wasDoubleClicked = false;  // clear persistent flag on new press
+        _wasLongPressedOnRelease = false;  // clear previous long-press latch
+        _lastPressDuration = 0;
         // Check for double-click using press-to-press timing (more forgiving)
         if (_prevPressTime > 0 && (now - _prevPressTime) < _doubleClickTime) {
           _doubleClicked = true;
@@ -602,6 +625,9 @@ class MultiControl {
         // Save hold and action state before reset (for release checks)
         _wasHeldOnRelease = _holdTriggered;
         _hadHoldAction = _holdActionOccurred;
+        // Calculate press duration from debounced timestamps
+        _lastPressDuration = now - _pressStartTime;
+        _wasLongPressedOnRelease = _lastPressDuration >= _longPressTime;
         // Reset hold and long-press state on release
         _holdTriggered = false;
         _held = false;
@@ -787,7 +813,8 @@ class MultiControl {
       _controlType = type;
       if (_controlType == 0) _touchValue = val;
       if (_controlType == 1) _potValue = val;
-      if (_controlType == 2) _buttonValue = val;
+      // Note: _buttonValue for types 2 and 4 is managed by readButton/readMuxButton
+      // state machine (press/release blocks). Don't overwrite it here.
       if (_controlType == 3) _switchValue = val;
     }
 
@@ -938,12 +965,14 @@ class MultiControl {
     bool _wasDoubleClicked = false;  // persistent flag (cleared on next button read, not on check)
     bool _singleClicked = false;  // flag set when single-click confirmed
     bool _clickPending = false;  // true if waiting to confirm single vs double click
+    unsigned long _lastPressDuration = 0;  // duration of last press (ms)
     // Hold detection
     unsigned long _pressStartTime = 0;  // timestamp when button was pressed
     unsigned long _holdTime = 500;  // ms to trigger hold
     bool _held = false;  // flag set when hold detected
     bool _holdTriggered = false;  // ensures hold only triggers once per press
     bool _wasHeldOnRelease = false;  // preserved hold state for release detection
+    bool _wasLongPressedOnRelease = false;  // preserved long-press state for release detection
     bool _holdActionOccurred = false;  // external action during hold
     bool _hadHoldAction = false;  // preserved action state for release detection
     // Long-press detection (continuous state while held past threshold)
