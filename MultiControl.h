@@ -195,6 +195,30 @@ class MultiControl {
           _touchDebounceCount = 0;  // Reset counter when state matches
         }
 
+        // Retrigger detection: requires a rapid DROP (dip) then a rapid RISE (recovery)
+        // Both must exceed the threshold in a single read-to-read step.
+        // This avoids false triggers on initial press (no preceding dip) and on
+        // normal release (dip but no recovery), and on hold noise (neither exceeds threshold).
+        if (_touchState && _retriggerThreshold > 0) {
+          if (_prevTouchDelta > 0) {
+            int16_t dropAmount = _prevTouchDelta - delta;
+            if (dropAmount >= _retriggerThreshold) {
+              _touchDipSeen = true;
+            }
+            if (_touchDipSeen) {
+              int16_t riseAmount = delta - _prevTouchDelta;
+              if (riseAmount >= _retriggerThreshold && delta > _touchOnThreshold) {
+                _touchRetriggered = true;
+                _touchDipSeen = false;
+              }
+            }
+          }
+          _prevTouchDelta = delta;
+        } else {
+          _prevTouchDelta = 0;
+          _touchDipSeen = false;
+        }
+
         _touchValue = min(1024, max(0, delta) * 10);  // Scale to 0-1024
         setValue(_touchValue);
         return _touchValue;
@@ -451,6 +475,31 @@ class MultiControl {
     /** Get touch OFF threshold */
     int16_t getTouchOffThreshold() { return _touchOffThreshold; }
 
+    /** Set retrigger detection threshold
+     * Detects rapid lift-and-retouch by monitoring per-read delta drops.
+     * When the delta drops by more than this threshold between consecutive reads
+     * while touched, a release is forced to enable retrigger detection.
+     * @param threshold Min drop per read to detect retrigger (default 15, 0 = disabled)
+     */
+    void setRetriggerThreshold(int16_t threshold) {
+      _retriggerThreshold = threshold;
+    }
+
+    /** Get retrigger threshold */
+    int16_t getRetriggerThreshold() { return _retriggerThreshold; }
+
+    /** Check if a rapid retrigger was detected (reads and clears the flag)
+     * Call after isTouched() to detect quick lift-and-retouch while pad remains touched.
+     * Returns true once per retrigger event.
+     */
+    bool wasRetriggered() {
+      if (_touchRetriggered) {
+        _touchRetriggered = false;
+        return true;
+      }
+      return false;
+    }
+
     /** Set pot hysteresis (minimum change required to report new value)
      * Higher values reduce jitter but decrease sensitivity
      * @param hysteresis Threshold value (default 3, try 8-15 for less jitter)
@@ -518,6 +567,9 @@ class MultiControl {
       _touchBaseline = 65535;
       _baselineDriftCounter = 0;
       _touchDebounceCount = 0;
+      _prevTouchDelta = 0;
+      _touchRetriggered = false;
+      _touchDipSeen = false;
     }
 
     /** Calibrate touch baseline at startup
@@ -1030,6 +1082,10 @@ class MultiControl {
     uint8_t _touchDebounceCount = 0;   // Counter for consecutive consistent readings
     uint8_t _touchDebounceReads = 4;   // Required consecutive reads (4 reads × 4ms = ~16ms debounce)
     uint16_t _baselineDriftCounter = 0;      // Counter for slow baseline adaptation
+    int16_t _prevTouchDelta = 0;             // Previous delta for retrigger detection
+    int16_t _retriggerThreshold = 15;        // Min per-read drop to detect rapid lift (0 = disabled)
+    bool _touchRetriggered = false;          // Flag set when rapid retrigger detected
+    bool _touchDipSeen = false;              // Dip detected, waiting for recovery
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
