@@ -63,6 +63,8 @@ class MultiControl {
       _pin = pin;
       if (_controlType == _MUX_BUTTON) {
         pinMode(_pin, INPUT_PULLUP);
+      } else if (_controlType == _ENCODER) {
+        pinMode(_pin, INPUT_PULLUP);  // Encoder pin A
       } else {
         pinMode(_pin, INPUT);  // Default to INPUT for pots/touch/other
       }
@@ -115,8 +117,125 @@ class MultiControl {
       return _muxChannel; 
     }
 
+    // --- Encoder API ---
+
+    /** Set encoder pins and configure as encoder control type.
+    * @param pinA GPIO pin for encoder channel A (rotation)
+    * @param pinB GPIO pin for encoder channel B (rotation)
+    * @param buttonPin GPIO pin for encoder push button (0 = no button)
+    */
+    void setEncoderPins(uint8_t pinA, uint8_t pinB, uint8_t buttonPin = 0) {
+      _controlType = _ENCODER;
+      _pin = pinA;
+      _encoderPinB = pinB;
+      pinMode(_pin, INPUT_PULLUP);
+      pinMode(_encoderPinB, INPUT_PULLUP);
+      // Sync Gray code state to actual pin levels
+      _encState = (digitalRead(_pin) << 1) | digitalRead(_encoderPinB);
+      _encAccum = 0;
+      if (buttonPin > 0) {
+        _encoderButtonPin = buttonPin;
+        _encoderHasButton = true;
+        pinMode(_encoderButtonPin, INPUT_PULLUP);
+        // Initialize button debounce state
+        _lastButtonChangeTime = millis();
+        _rawButtonState = digitalRead(_encoderButtonPin);
+        _debouncedButtonState = _rawButtonState;
+        _buttonValue = (_rawButtonState == 0);
+      }
+    }
+
+    /** Set the encoder position range.
+    * @param minVal Minimum position value
+    * @param maxVal Maximum position value
+    */
+    void setEncoderRange(int minVal, int maxVal) {
+      _encoderMin = minVal;
+      _encoderMax = maxVal;
+      _encoderPosition = constrain(_encoderPosition, _encoderMin, _encoderMax);
+    }
+
+    /** Set the encoder position directly.
+    * @param pos The position value (clamped to min/max range)
+    */
+    void setEncoderPosition(int pos) {
+      _encoderPosition = constrain(pos, _encoderMin, _encoderMax);
+      _encoderPrevPosition = _encoderPosition;
+    }
+
+    /** Get the current encoder position. */
+    int getEncoderPosition() { return _encoderPosition; }
+
+    /** Set the number of Gray code state changes per physical detent.
+    * Most encoders have 4 edges per detent (default). Some have 1 or 2.
+    * @param steps Steps per detent (1, 2, or 4)
+    */
+    void setStepsPerDetent(int8_t steps) { _encStepsPerDetent = steps; }
+
+    /** Enable encoder acceleration.
+    * When turning fast, each detent advances by more than 1 step.
+    * @param factor Max multiplier at full speed (e.g. 5.0 = up to 5x). 1.0 disables.
+    * @param thresholdMs Detent interval below which acceleration kicks in (default 200ms).
+    *   Smaller values require faster turning before acceleration starts.
+    */
+    void setEncoderAccel(float factor, unsigned long thresholdMs = 200) {
+      _encAccelFactor = max(1.0f, factor);
+      _encAccelThreshold = thresholdMs;
+      _encAccelEnabled = (factor > 1.0f);
+    }
+
+    /** Read encoder rotation and optional button.
+    * Updates encoder position via Gray code state machine.
+    * If a button pin was configured, also runs the button state machine.
+    * @return Current encoder position (clamped to min/max range)
+    */
+    int readEncoder() {
+      // Gray code lookup table (local static avoids header-only class static issues)
+      static const int8_t encTable[] = {0, 1, -1, 0, -1, 0, 0, 1, 1, 0, 0, -1, 0, -1, 1, 0};
+
+      uint8_t pinA = digitalRead(_pin);
+      uint8_t pinB = digitalRead(_encoderPinB);
+      uint8_t newState = (pinA << 1) | pinB;
+      uint8_t idx = (_encState << 2) | newState;
+      int8_t dir = encTable[idx];
+      _encState = newState;
+
+      if (dir != 0) {
+        _encAccum += dir;
+        if (_encAccum >= _encStepsPerDetent || _encAccum <= -_encStepsPerDetent) {
+          int step = (_encAccum > 0) ? 1 : -1;
+          _encAccum = 0;
+
+          // Acceleration: scale step size by turning speed
+          if (_encAccelEnabled) {
+            unsigned long now = millis();
+            if (_encLastDetentTime > 0) {
+              unsigned long interval = now - _encLastDetentTime;
+              if (interval > 0 && interval < _encAccelThreshold) {
+                float speed = 1.0f + (_encAccelFactor - 1.0f) * (1.0f - (float)interval / (float)_encAccelThreshold);
+                int accelStep = (int)(speed + 0.5f);  // round instead of truncate
+                if (accelStep < 1) accelStep = 1;
+                step = (step > 0) ? accelStep : -accelStep;
+              }
+            }
+            _encLastDetentTime = now;
+          }
+
+          _encoderPosition += step;
+          _encoderPosition = constrain(_encoderPosition, _encoderMin, _encoderMax);
+        }
+      }
+
+      // Run button state machine if configured
+      if (_encoderHasButton) {
+        readEncoderButton();
+      }
+
+      return _encoderPosition;
+    }
+
     /* Set the type of control.
-    * @param controlType The type of control: 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton
+    * @param controlType The type of control: 0 = touch, 1 = pot, 2 = button, 3 = switch, 4 = muxButton, 5 = encoder
     */
     void setControl(uint8_t controlType) {
       _controlType = controlType;
@@ -131,6 +250,7 @@ class MultiControl {
         pinMode(_pin, INPUT); // for touch or potentiometer
         digitalWrite(_pin, LOW); // disable internal pullup if set
       }
+      // _ENCODER: no-op here, use setEncoderPins() instead
     }
 
       /* Retrieve the type of control in use */
@@ -328,8 +448,9 @@ class MultiControl {
 
     bool isPressed() {
       uint8_t val = 1;
-      if (_controlType == 2) val = readButton();
-      if (_controlType == 4) val = readMuxButton();
+      if (_controlType == _BUTTON) val = readButton();
+      if (_controlType == _MUX_BUTTON) val = readMuxButton();
+      if (_controlType == _ENCODER) return _buttonValue;
       bool returnVal = false;
       if (val == 0) returnVal = true;
       return returnVal;
@@ -814,6 +935,7 @@ class MultiControl {
       if (_controlType == 2) return readButton();
       if (_controlType == 3) return readSwitch();
       if (_controlType == 4) return readMuxButton();
+      if (_controlType == _ENCODER) return readEncoder();
       return 0; // just in case
     }
 
@@ -850,6 +972,11 @@ class MultiControl {
           _prevButtonValue = newVal;
         }
       }
+      if (_controlType == _ENCODER) {
+        _encoderPrevPosition = _encoderPosition;
+        readEncoder();
+        if (_encoderPosition != _encoderPrevPosition) returnVal = _encoderPosition;
+      }
       return returnVal;
     }
 
@@ -868,6 +995,7 @@ class MultiControl {
       // Note: _buttonValue for types 2 and 4 is managed by readButton/readMuxButton
       // state machine (press/release blocks). Don't overwrite it here.
       if (_controlType == 3) _switchValue = val;
+      if (_controlType == _ENCODER) _encoderPosition = constrain(val, _encoderMin, _encoderMax);
     }
 
     /* Sepcify the control value on the controller type */
@@ -1047,6 +1175,7 @@ class MultiControl {
     const static uint8_t _BUTTON = 2;
     const static uint8_t _SWITCH = 3;
     const static uint8_t _MUX_BUTTON = 4;
+    const static uint8_t _ENCODER = 5;
     int _numBanks = 0;
     int* _bankValues = nullptr;  // Dynamic allocation - grows as needed
     uint8_t _bank = 0;
@@ -1075,6 +1204,22 @@ class MultiControl {
     bool _firstRead = true;
     uint8_t _muxControlPins[3] = {0};  // Static allocation (was dynamic new uint8_t[])
     uint8_t _muxChannel = 0;
+    // Encoder
+    uint8_t _encoderPinB = 0;
+    uint8_t _encoderButtonPin = 0;
+    bool _encoderHasButton = false;
+    uint8_t _encState = 0;          // Previous 2-bit Gray code state
+    int8_t _encAccum = 0;           // Sub-detent step accumulator
+    int8_t _encStepsPerDetent = 4;  // Configurable (most encoders = 4)
+    int _encoderPosition = 0;
+    int _encoderPrevPosition = 0;   // For readChanged()
+    int _encoderMin = 0;
+    int _encoderMax = 100;          // Sensible default
+    // Acceleration
+    bool _encAccelEnabled = false;
+    float _encAccelFactor = 5.0;    // Max multiplier at full speed
+    unsigned long _encAccelThreshold = 200; // ms — detent intervals below this trigger acceleration
+    unsigned long _encLastDetentTime = 0;   // Timestamp of last completed detent
     uint16_t _touchBaseline = 65535;  // Start high, will be reduced by actual readings
     // Touch hysteresis and debouncing
     int16_t _touchOnThreshold = 22;    // Higher threshold to turn ON (prevents false triggers)
@@ -1086,6 +1231,77 @@ class MultiControl {
     int16_t _retriggerThreshold = 15;        // Min per-read drop to detect rapid lift (0 = disabled)
     bool _touchRetriggered = false;          // Flag set when rapid retrigger detected
     bool _touchDipSeen = false;              // Dip detected, waiting for recovery
+
+    /** Read encoder push button using the same debounce + gesture state machine as readButton().
+    * Updates _buttonValue, _held, _doubleClicked, _singleClicked, etc.
+    */
+    void readEncoderButton() {
+      int rawVal = digitalRead(_encoderButtonPin);
+      unsigned long now = millis();
+
+      // Debouncing
+      if (rawVal != _rawButtonState) {
+        _lastButtonChangeTime = now;
+        _rawButtonState = rawVal;
+      }
+
+      int val = _debouncedButtonState;
+      if ((now - _lastButtonChangeTime) >= _debounceTime) {
+        if (_rawButtonState != _debouncedButtonState) {
+          _debouncedButtonState = _rawButtonState;
+          val = _debouncedButtonState;
+        }
+      }
+
+      if (val == 0 && _buttonValue == false) {
+        _buttonValue = true;
+        multiControlAnyButtonPressed += 1;
+        _singleClicked = false;
+        _wasDoubleClicked = false;
+        _wasLongPressedOnRelease = false;
+        _lastPressDuration = 0;
+        if (_prevPressTime > 0 && (now - _prevPressTime) < _doubleClickTime) {
+          _doubleClicked = true;
+          _wasDoubleClicked = true;
+          _clickPending = false;
+          _prevPressTime = 0;
+        } else {
+          _clickPending = true;
+          _prevPressTime = now;
+        }
+        _pressStartTime = now;
+        _holdTriggered = false;
+        _held = false;
+        _wasHeldOnRelease = false;
+        _holdActionOccurred = false;
+        _hadHoldAction = false;
+      }
+      if (val == 1 && _buttonValue == true) {
+        _buttonValue = false;
+        multiControlAnyButtonPressed -= 1;
+        _lastReleaseTime = now;
+        _wasHeldOnRelease = _holdTriggered;
+        _hadHoldAction = _holdActionOccurred;
+        _lastPressDuration = now - _pressStartTime;
+        _wasLongPressedOnRelease = _lastPressDuration >= _longPressTime;
+        _holdTriggered = false;
+        _held = false;
+        _holdActionOccurred = false;
+        _longPressed = false;
+      }
+      if (_buttonValue && !_holdTriggered && (now - _pressStartTime >= _holdTime)) {
+        _held = true;
+        _holdTriggered = true;
+      }
+      if (_buttonValue && (now - _pressStartTime >= _longPressTime)) {
+        _longPressed = true;
+      }
+      if (_clickPending && !_buttonValue && (now - _prevPressTime) >= _doubleClickTime) {
+        _singleClicked = true;
+        _clickPending = false;
+        _prevPressTime = 0;
+      }
+    }
 
     /** Return a partial increment toward target from current value
     * @curr The curent value
