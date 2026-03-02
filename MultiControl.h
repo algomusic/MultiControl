@@ -265,20 +265,18 @@ class MultiControl {
         }
         _touchValue = touchRead(_pin) >> 8;
 
-        // Update baseline - but ignore small drops that could be capacitive coupling
-        // from other touched pads. Only sync if significantly lower (initial calibration)
-        // or if baseline is uninitialized.
+        // Update baseline only when NOT touched — freeze while touched to prevent
+        // coupling-induced dips from corrupting the reference level
         if (_touchBaseline == 65535) {
           // First read after reset - sync immediately
           _touchBaseline = _touchValue;
-        } else if (_touchValue < _touchBaseline - 5) {
-          // Significant drop (> 5 units) - likely real environmental change, sync
-          _touchBaseline = _touchValue;
-        }
-        // Small drops (1-5 units) are ignored - likely capacitive coupling from other touches
-
-        // Adaptive baseline: slowly drift up when not touched to handle environmental changes
-        if (!_touchState) {
+        } else if (!_touchState) {
+          // Only adapt baseline when untouched
+          if (_touchValue < _touchBaseline - 5) {
+            // Significant drop - likely real environmental change, sync
+            _touchBaseline = _touchValue;
+          }
+          // Slowly drift up to handle gradual environmental changes
           _baselineDriftCounter++;
           if (_baselineDriftCounter >= 50 && _touchValue > _touchBaseline) {  // ~200ms at 4ms polling
             _touchBaseline++;
@@ -304,12 +302,23 @@ class MultiControl {
           }
         }
 
+        // Minimum hold time: suppress OFF transitions shortly after ON
+        // Prevents false releases caused by capacitive coupling when other pads are touched
+        if (_touchState && !newState && _touchMinHoldMs > 0) {
+          if ((millis() - _touchOnTime) < _touchMinHoldMs) {
+            newState = true;  // Force state to remain ON during hold period
+          }
+        }
+
         // Debouncing: require consecutive consistent readings before changing state
         if (newState != _touchState) {
           _touchDebounceCount++;
           if (_touchDebounceCount >= _touchDebounceReads) {
             _touchState = newState;
             _touchDebounceCount = 0;
+            if (_touchState) {
+              _touchOnTime = millis();  // Record when touch went ON
+            }
           }
         } else {
           _touchDebounceCount = 0;  // Reset counter when state matches
@@ -319,7 +328,9 @@ class MultiControl {
         // Both must exceed the threshold in a single read-to-read step.
         // This avoids false triggers on initial press (no preceding dip) and on
         // normal release (dip but no recovery), and on hold noise (neither exceeds threshold).
-        if (_touchState && _retriggerThreshold > 0) {
+        // Suppress during minimum hold window — dip-rise patterns from coupling aren't real retriggers.
+        bool inHoldWindow = _touchMinHoldMs > 0 && (millis() - _touchOnTime) < _touchMinHoldMs;
+        if (_touchState && _retriggerThreshold > 0 && !inHoldWindow) {
           if (_prevTouchDelta > 0) {
             int16_t dropAmount = _prevTouchDelta - delta;
             if (dropAmount >= _retriggerThreshold) {
@@ -581,8 +592,8 @@ class MultiControl {
     }
 
     /** Set touch detection thresholds for hysteresis
-     * @param onThreshold Value above baseline to trigger touch ON (default 20)
-     * @param offThreshold Value above baseline to trigger touch OFF (default 8)
+     * @param onThreshold Value above baseline to trigger touch ON (default 22)
+     * @param offThreshold Value above baseline to trigger touch OFF (default 16)
      * The gap between these values prevents oscillation near the threshold.
      */
     void setTouchThresholds(int16_t onThreshold, int16_t offThreshold) {
@@ -609,9 +620,21 @@ class MultiControl {
     /** Get retrigger threshold */
     int16_t getRetriggerThreshold() { return _retriggerThreshold; }
 
-    /** Check if a rapid retrigger was detected (reads and clears the flag)
+    /** Reset the retrigger state machine — clears any pending dip/rise detection.
+     * Call this when retrigger events should be discarded (e.g., when other pads
+     * are active and coupling noise is expected).
+     */
+    void resetRetriggerState() {
+      _touchRetriggered = false;
+      _touchDipSeen = false;
+      _prevTouchDelta = 0;
+    }
+
+    /** Check if a rapid retrigger was detected (reads and clears the flag).
      * Call after isTouched() to detect quick lift-and-retouch while pad remains touched.
      * Returns true once per retrigger event.
+     * Note: unreliable in multi-pad environments due to capacitive coupling.
+     * Consider setRetriggerThreshold(0) to disable for multi-pad use.
      */
     bool wasRetriggered() {
       if (_touchRetriggered) {
@@ -680,6 +703,19 @@ class MultiControl {
 
     /** Get touch debounce read count */
     uint8_t getTouchDebounceReads() { return _touchDebounceReads; }
+
+    /** Set minimum hold time after touch ON (ms)
+     * Suppresses false OFF transitions caused by capacitive coupling when
+     * multiple pads are touched simultaneously. The touch state cannot
+     * transition to OFF within this period after going ON.
+     * @param ms Minimum hold time in milliseconds (default 50, 0 = disabled)
+     */
+    void setTouchMinHold(uint16_t ms) {
+      _touchMinHoldMs = ms;
+    }
+
+    /** Get minimum hold time (ms) */
+    uint16_t getTouchMinHold() { return _touchMinHoldMs; }
 
     /** Reset touch baseline to allow recalibration
      * Call this if touch behavior becomes erratic after environmental changes
@@ -1231,6 +1267,8 @@ class MultiControl {
     int16_t _retriggerThreshold = 15;        // Min per-read drop to detect rapid lift (0 = disabled)
     bool _touchRetriggered = false;          // Flag set when rapid retrigger detected
     bool _touchDipSeen = false;              // Dip detected, waiting for recovery
+    unsigned long _touchOnTime = 0;          // millis() when touch state last went ON
+    uint16_t _touchMinHoldMs = 30;           // Minimum hold time (ms) - suppresses coupling-induced false releases
 
     /** Read encoder push button using the same debounce + gesture state machine as readButton().
     * Updates _buttonValue, _held, _doubleClicked, _singleClicked, etc.
