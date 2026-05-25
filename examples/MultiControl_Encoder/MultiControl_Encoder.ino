@@ -14,7 +14,7 @@ void setup() {
   Serial.println();
 
   // Pin A, Pin B, Push button (0 = no button)
-  encoder.setEncoderPins(15, 16, 17);
+  encoder.setEncoderPins(15, 16, 21);
   encoder.setEncoderRange(0, 100);
   encoder.setEncoderPosition(50);  // Start at midpoint
 
