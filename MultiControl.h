@@ -52,7 +52,7 @@ class MultiControl {
     MultiControl(uint8_t pin, uint8_t controlType): _pin(pin), _controlType(controlType) {
       setPin(pin);
       setControl(controlType);
-      // analogSetPinAttenuation(pin, ADC_11db); // ESP32
+      if (_controlType == _POT) analogSetPinAttenuation(pin, ADC_11db);
       initBanks(1);  // Start with 1 bank to save memory
     };
 
@@ -184,6 +184,13 @@ class MultiControl {
       _encAccelEnabled = (factor > 1.0f);
     }
 
+    /** Enable encoder position wrapping.
+     * When enabled, turning past max wraps to min, and past min wraps to max.
+     * When disabled (default), position is clamped to min/max range.
+     * @param enabled true to enable wrapping, false to clamp (default)
+     */
+    void setEncoderToWrap(bool enabled) { encoderToWrap = enabled; }
+
     /** Read encoder rotation and optional button.
     * Updates encoder position via Gray code state machine.
     * If a button pin was configured, also runs the button state machine.
@@ -222,7 +229,12 @@ class MultiControl {
           }
 
           _encoderPosition += step;
-          _encoderPosition = constrain(_encoderPosition, _encoderMin, _encoderMax);
+          if (encoderToWrap) {
+            int range = _encoderMax - _encoderMin + 1;
+            _encoderPosition = _encoderMin + ((_encoderPosition - _encoderMin) % range + range) % range;
+          } else {
+            _encoderPosition = constrain(_encoderPosition, _encoderMin, _encoderMax);
+          }
         }
       }
 
@@ -263,30 +275,47 @@ class MultiControl {
         if (_controlType != _TOUCH) {
           setControl(_TOUCH);
         }
-        _touchValue = touchRead(_pin) >> 8;
-
-        // Update baseline only when NOT touched — freeze while touched to prevent
-        // coupling-induced dips from corrupting the reference level
+        #if defined(CONFIG_IDF_TARGET_ESP32)
+        // Classic ESP32: touchRead() returns ~20-80; value DECREASES when touched.
+        // No >> 8 (that zeroes classic ESP32 values). Delta is baseline - raw so it
+        // is positive when touched, matching the existing threshold comparisons.
+        int rawValue = touchRead(_pin);
         if (_touchBaseline == 65535) {
-          // First read after reset - sync immediately
+          _touchBaseline = rawValue;
+        } else if (!_touchState) {
+          if (rawValue > _touchBaseline + 5) {
+            _touchBaseline = rawValue;  // sudden rise - sync up
+          }
+          _baselineDriftCounter++;
+          if (_baselineDriftCounter >= 50) {
+            if (rawValue > _touchBaseline) _touchBaseline++;
+            else if (rawValue < _touchBaseline - 1) _touchBaseline--;
+            _baselineDriftCounter = 0;
+          }
+        } else {
+          _baselineDriftCounter = 0;
+        }
+        int delta = _touchBaseline - rawValue;  // positive when touched (value drops)
+
+        #else
+        // ESP32-S3 and newer: touchRead() returns large values; value INCREASES when touched.
+        _touchValue = touchRead(_pin) >> 8;
+        if (_touchBaseline == 65535) {
           _touchBaseline = _touchValue;
         } else if (!_touchState) {
-          // Only adapt baseline when untouched
           if (_touchValue < _touchBaseline - 5) {
-            // Significant drop - likely real environmental change, sync
             _touchBaseline = _touchValue;
           }
-          // Slowly drift up to handle gradual environmental changes
           _baselineDriftCounter++;
-          if (_baselineDriftCounter >= 50 && _touchValue > _touchBaseline) {  // ~200ms at 4ms polling
+          if (_baselineDriftCounter >= 50 && _touchValue > _touchBaseline) {
             _touchBaseline++;
             _baselineDriftCounter = 0;
           }
         } else {
-          _baselineDriftCounter = 0;  // Reset counter while touched
+          _baselineDriftCounter = 0;
         }
-
         int delta = _touchValue - _touchBaseline;
+        #endif
         bool newState = _touchState;  // Start with current state
 
         // Hysteresis: use different thresholds for on vs off
@@ -486,7 +515,9 @@ class MultiControl {
      * @return true if double-click detected since last press, false otherwise
      */
     bool wasDoubleClicked() {
-      return _wasDoubleClicked;
+      bool result = _wasDoubleClicked;
+      _wasDoubleClicked = false;  // Clear after reading
+      return result;
     }
 
     /** Check if a single click was confirmed (double-click window expired)
@@ -1256,6 +1287,7 @@ class MultiControl {
     float _encAccelFactor = 5.0;    // Max multiplier at full speed
     unsigned long _encAccelThreshold = 200; // ms — detent intervals below this trigger acceleration
     unsigned long _encLastDetentTime = 0;   // Timestamp of last completed detent
+    bool encoderToWrap = false;              // Wrap encoder position at range boundaries
     uint16_t _touchBaseline = 65535;  // Start high, will be reduced by actual readings
     // Touch hysteresis and debouncing
     int16_t _touchOnThreshold = 22;    // Higher threshold to turn ON (prevents false triggers)
