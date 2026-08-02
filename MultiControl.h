@@ -1,7 +1,7 @@
 /*
  * MultiControl.h
  *
- * Manage ESP32 GPIO pins for buttons, dials,  and switches.
+ * Manage ESP32 GPIO pins for buttons, dials, touch, and switches.
  * by Andrew R. Brown 2023
  * 
  * Pot smoothing algorithms from the
@@ -379,7 +379,7 @@ class MultiControl {
           _touchDipSeen = false;
         }
 
-        _touchValue = min(1024, max(0, delta) * 10);  // Scale to 0-1024
+        _touchValue = min(1024, max(0, delta) * 2);  // Scale to 0-1024
         setValue(_touchValue);
         return _touchValue;
       #else
