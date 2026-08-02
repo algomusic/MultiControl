@@ -7,7 +7,7 @@
 MultiControl is a single-header Arduino library (`MultiControl.h`, ~1470 lines) for ESP32 GPIO management. It handles multiple input types through a unified interface with support for banks and latching.
 
 **License:** Creative Commons Attribution-NonCommercial-ShareAlike 4.0
-**Based on:** ResponsiveAnalogRead library by Damien Clarke (2016) for pot smoothing
+**Based on:** ResponsiveAnalogRead library by Damien Clarke (2016) for pot smoothing 
 
 ---
 
